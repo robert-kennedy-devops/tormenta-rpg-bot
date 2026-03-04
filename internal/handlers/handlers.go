@@ -3076,10 +3076,36 @@ func handleUnequipSlot(chatID int64, msgID int, userID int64, slot string) {
 	if char == nil {
 		return
 	}
-	database.UnequipSlot(char.ID, slot)
+	if slot == "" {
+		showSlotItems(chatID, msgID, userID, slot)
+		return
+	}
+	unequipByResolvedSlot(char.ID, slot)
 	recalculateStats(char)
 	database.SaveCharacter(char)
 	showSlotItems(chatID, msgID, userID, slot)
+}
+
+// unequipByResolvedSlot remove itens equipados considerando slot persistido e
+// fallback legado (slot deduzido por tipo/item).
+func unequipByResolvedSlot(charID int, slot string) {
+	// Primeiro limpa por slot persistido.
+	_ = database.UnequipSlot(charID, slot)
+
+	// Depois limpa estados legados sem slot salvo.
+	inv, _ := database.GetInventory(charID)
+	for _, invItem := range inv {
+		if !invItem.Equipped {
+			continue
+		}
+		item, ok := game.Items[invItem.ItemID]
+		if !ok {
+			continue
+		}
+		if normalizeEquippedSlot(invItem, item) == slot {
+			_ = database.UnequipItem(charID, invItem.ItemID)
+		}
+	}
 }
 
 func slotDisplayName(slot string) string {
