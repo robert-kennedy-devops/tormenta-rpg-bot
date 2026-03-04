@@ -42,3 +42,34 @@ Resumo:
 - Inventário, equipamentos, loja e venda.
 - VIP com auto-caça.
 - Pagamentos Pix integrados.
+
+## Publicação no GitHub (passo a passo)
+
+### 1) Inicializar e versionar localmente
+
+```bash
+git init
+git add .
+git commit -m "chore: initial release of tormenta rpg bot"
+git branch -M main
+```
+
+### 2) Criar repositório no GitHub
+
+- Acesse: `https://github.com/new`
+- Nome sugerido: `tormenta-rpg-bot`
+- Visibilidade: pública ou privada
+- Não marque README/.gitignore/licença (já existem localmente)
+
+### 3) Conectar remoto e fazer push
+
+```bash
+git remote add origin https://github.com/SEU_USUARIO/tormenta-rpg-bot.git
+git push -u origin main
+```
+
+### 4) Configurar About
+
+- Description: use a seção "Descrição curta" deste arquivo.
+- About: use a seção "About (descrição estendida)".
+- Topics: use a lista recomendada.
