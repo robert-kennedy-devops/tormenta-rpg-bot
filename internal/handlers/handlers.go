@@ -2768,6 +2768,7 @@ func showEquipScreen(chatID int64, msgID int, userID int64) {
 	if char == nil {
 		return
 	}
+	sanitizeEquippedConflicts(char.ID)
 	recalculateStats(char)
 
 	equipped, _ := database.GetEquippedItems(char.ID)
@@ -2861,6 +2862,7 @@ func showSlotItems(chatID int64, msgID int, userID int64, slot string) {
 	if char == nil {
 		return
 	}
+	sanitizeEquippedConflicts(char.ID)
 
 	slotEmojis := map[string]string{
 		"weapon": "⚔️", "head": "⛑️", "chest": "🛡️",
@@ -2958,20 +2960,7 @@ func isItemEquippedInSlot(inv models.InventoryItem, item models.Item, slot strin
 	if !inv.Equipped {
 		return false
 	}
-	if inv.Slot != "" {
-		return inv.Slot == slot
-	}
-	// Fallback para registros legados sem slot persistido.
-	if item.Slot != "" {
-		return item.Slot == slot
-	}
-	if item.Type == "weapon" {
-		return slot == "weapon"
-	}
-	if item.Type == "accessory" {
-		return slot == "accessory1"
-	}
-	return false
+	return normalizeEquippedSlot(inv, item) == slot
 }
 
 // itemStatSummary formats a compact stat line for an item
@@ -3036,6 +3025,7 @@ func handleEquipItem(chatID int64, msgID int, userID int64, itemID, slot string)
 		return
 	}
 
+	sanitizeEquippedConflicts(char.ID)
 	database.EquipItemSlot(char.ID, itemID, item.Type, slot)
 	recalculateStats(char)
 	database.SaveCharacter(char)
@@ -3297,10 +3287,59 @@ func handleInventoryEquip(chatID int64, msgID int, userID int64, itemID string) 
 		return
 	}
 
+	sanitizeEquippedConflicts(char.ID)
 	database.EquipItemSlot(char.ID, itemID, item.Type, slot)
 	recalculateStats(char)
 	database.SaveCharacter(char)
 	showInventory(chatID, msgID, userID, "all")
+}
+
+func normalizeEquippedSlot(inv models.InventoryItem, item models.Item) string {
+	if inv.Slot != "" {
+		return inv.Slot
+	}
+	if item.Slot != "" {
+		return item.Slot
+	}
+	lower := strings.ToLower(inv.ItemID + " " + item.Name)
+	if strings.Contains(lower, "shield") || strings.Contains(lower, "escudo") {
+		return "offhand"
+	}
+	switch item.Type {
+	case "weapon":
+		return "weapon"
+	case "armor":
+		// Fallback para registros muito antigos sem slot persistido.
+		return "chest"
+	case "accessory":
+		return "accessory1"
+	}
+	return ""
+}
+
+// sanitizeEquippedConflicts corrige estados legados onde mais de um item ficou
+// marcado como equipado para o mesmo slot.
+func sanitizeEquippedConflicts(charID int) {
+	inv, _ := database.GetInventory(charID)
+	occupied := map[string]string{} // slot -> itemID
+	for _, it := range inv {
+		if !it.Equipped {
+			continue
+		}
+		item, ok := game.Items[it.ItemID]
+		if !ok {
+			continue
+		}
+		slot := normalizeEquippedSlot(it, item)
+		if slot == "" {
+			continue
+		}
+		if existingID, exists := occupied[slot]; exists && existingID != it.ItemID {
+			_ = database.UnequipItem(charID, it.ItemID)
+			continue
+		}
+		occupied[slot] = it.ItemID
+	}
 }
 
 func resolveInventoryEquipSlot(char *models.Character, item models.Item) string {
@@ -3486,6 +3525,48 @@ func branchLabel(branch string) string {
 	return branch
 }
 
+func branchOrderIndex(class, branch string) int {
+	switch class {
+	case "warrior":
+		switch branch {
+		case "protetor":
+			return 0
+		case "berserker":
+			return 1
+		case "campiao":
+			return 2
+		}
+	case "mage":
+		switch branch {
+		case "piromante":
+			return 0
+		case "crionita":
+			return 1
+		case "arcanista":
+			return 2
+		}
+	case "rogue":
+		switch branch {
+		case "assassino":
+			return 0
+		case "envenenador":
+			return 1
+		case "sombra":
+			return 2
+		}
+	case "archer":
+		switch branch {
+		case "atirador":
+			return 0
+		case "cacador":
+			return 1
+		case "arcano":
+			return 2
+		}
+	}
+	return 100
+}
+
 // showSkillTree exibe a árvore de habilidades organizada por ramos de build.
 // Cada ramo tem 4 tiers. Custo: T1=1pt T2=1pt T3=2pts T4=3pts
 // O jogador ganha 1 ponto por nível (total 19 pontos ao atingir nível 20).
@@ -3514,6 +3595,14 @@ func showSkillBranch(chatID int64, msgID int, userID int64, activeBranch string)
 		}
 		branches[sk.Branch] = append(branches[sk.Branch], sk)
 	}
+	sort.SliceStable(branchOrder, func(i, j int) bool {
+		ii := branchOrderIndex(char.Class, branchOrder[i])
+		jj := branchOrderIndex(char.Class, branchOrder[j])
+		if ii != jj {
+			return ii < jj
+		}
+		return branchLabel(branchOrder[i]) < branchLabel(branchOrder[j])
+	})
 
 	// Se nenhum ramo selecionado, usa o primeiro
 	if activeBranch == "" {
@@ -3543,14 +3632,16 @@ func showSkillBranch(chatID int64, msgID int, userID int64, activeBranch string)
 
 	// Exibe habilidades do ramo ativo
 	skillsInBranch := branches[activeBranch]
-	// Ordenar por Tier
-	for i := 0; i < len(skillsInBranch)-1; i++ {
-		for j := i + 1; j < len(skillsInBranch); j++ {
-			if skillsInBranch[j].Tier < skillsInBranch[i].Tier {
-				skillsInBranch[i], skillsInBranch[j] = skillsInBranch[j], skillsInBranch[i]
-			}
+	// Ordenação estável para evitar botões "pulando" entre renderizações.
+	sort.SliceStable(skillsInBranch, func(i, j int) bool {
+		if skillsInBranch[i].Tier != skillsInBranch[j].Tier {
+			return skillsInBranch[i].Tier < skillsInBranch[j].Tier
 		}
-	}
+		if skillsInBranch[i].RequiredLevel != skillsInBranch[j].RequiredLevel {
+			return skillsInBranch[i].RequiredLevel < skillsInBranch[j].RequiredLevel
+		}
+		return skillsInBranch[i].Name < skillsInBranch[j].Name
+	})
 
 	caption += fmt.Sprintf("%s *Ramo: %s*\n", branchEmoji(activeBranch), branchLabel(activeBranch))
 
