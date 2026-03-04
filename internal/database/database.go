@@ -1,0 +1,1385 @@
+package database
+
+import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"log"
+	"os"
+	"time"
+
+	_ "github.com/lib/pq"
+	"github.com/tormenta-bot/internal/models"
+)
+
+var jsonMarshal = json.Marshal
+var jsonUnmarshal = json.Unmarshal
+
+var DB *sql.DB
+
+func Connect() error {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://tormenta:tormenta123@localhost:5432/tormenta_rpg?sslmode=disable"
+	}
+	var err error
+	for i := 0; i < 10; i++ {
+		DB, err = sql.Open("postgres", dsn)
+		if err != nil {
+			log.Printf("DB open error: %v, retry %d/10", err, i+1)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		if err = DB.Ping(); err != nil {
+			log.Printf("DB ping error: %v, retry %d/10", err, i+1)
+			_ = DB.Close()
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		break
+	}
+	if err != nil {
+		if DB != nil {
+			_ = DB.Close()
+		}
+		return fmt.Errorf("failed to connect to database: %w", err)
+	}
+	DB.SetMaxOpenConns(25)
+	DB.SetMaxIdleConns(10)
+	DB.SetConnMaxLifetime(5 * time.Minute)
+	log.Println("✅ Database connected!")
+	return nil
+}
+
+func Migrate() {
+	if DB == nil {
+		log.Println("⚠️  Migrate() chamado sem DB inicializado")
+		return
+	}
+	stmts := []string{
+		`ALTER TABLE characters ADD COLUMN IF NOT EXISTS poison_turns int NOT NULL DEFAULT 0`,
+		`ALTER TABLE characters ADD COLUMN IF NOT EXISTS poison_dmg int NOT NULL DEFAULT 0`,
+		`ALTER TABLE characters ADD COLUMN IF NOT EXISTS combat_monster_poison_turns int NOT NULL DEFAULT 0`,
+		`ALTER TABLE characters ADD COLUMN IF NOT EXISTS combat_monster_poison_dmg int NOT NULL DEFAULT 0`,
+		`ALTER TABLE inventory ADD COLUMN IF NOT EXISTS slot VARCHAR(20) DEFAULT NULL`,
+		`UPDATE inventory
+		  SET slot='weapon'
+		  WHERE equipped=true AND COALESCE(slot,'')='' AND item_type='weapon'`,
+		`UPDATE inventory
+		  SET slot='chest'
+		  WHERE equipped=true AND COALESCE(slot,'')='' AND item_type='armor'`,
+		`UPDATE inventory
+		  SET slot=CASE
+		    WHEN item_id LIKE 'necklace_%'
+		      OR item_id LIKE 'amulet_%'
+		      OR item_id LIKE 'pendant_%' THEN 'accessory2'
+		    ELSE 'accessory1'
+		  END
+		  WHERE equipped=true AND COALESCE(slot,'')='' AND item_type='accessory'`,
+		`UPDATE inventory
+		  SET slot='offhand'
+		  WHERE equipped=true AND (item_id='iron_shield' OR item_id LIKE 'shield_%')`,
+	}
+	for _, stmt := range stmts {
+		if _, err := DB.Exec(stmt); err != nil {
+			log.Printf("migration warning: %v", err)
+		}
+	}
+	log.Println("✅ Migrations applied!")
+}
+
+// =============================================
+// PLAYER
+// =============================================
+
+func UpsertPlayer(id int64, username string) error {
+	_, err := DB.Exec(`
+		INSERT INTO players (id, username) VALUES ($1, $2)
+		ON CONFLICT (id) DO UPDATE SET username=$2, updated_at=NOW()
+	`, id, username)
+	return err
+}
+
+// GetPlayer returns a player with VIP info.
+func GetPlayer(playerID int64) (*models.Player, error) {
+	p := &models.Player{}
+	err := DB.QueryRow(`
+		SELECT id, username, created_at, is_vip, vip_expires_at
+		FROM players WHERE id=$1
+	`, playerID).Scan(&p.ID, &p.Username, &p.CreatedAt, &p.IsVIP, &p.VIPExpiresAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return p, err
+}
+
+// IsVIP returns true if the player currently has active VIP.
+func IsVIP(playerID int64) bool {
+	p, err := GetPlayer(playerID)
+	if err != nil || p == nil {
+		return false
+	}
+	return p.IsVIPActive()
+}
+
+// SetVIP sets VIP status for a player.
+// duration=0 means permanent VIP; duration>0 adds that duration from now.
+func SetVIP(playerID int64, active bool, duration time.Duration) error {
+	var expiresAt *time.Time
+	if active && duration > 0 {
+		t := time.Now().Add(duration)
+		expiresAt = &t
+	}
+	_, err := DB.Exec(`
+		UPDATE players SET is_vip=$1, vip_expires_at=$2 WHERE id=$3
+	`, active, expiresAt, playerID)
+	return err
+}
+
+// ── AUTO HUNT ─────────────────────────────────────────────
+
+// AutoHuntSkillConfig define como o personagem usa habilidades durante a caça automática.
+// Mode: "attack" = só ataque normal | "skill" = rodízio pelas Skills | "smart" = habilidade se tiver MP, senão ataque
+type AutoHuntSkillConfig struct {
+	Mode    string   `json:"mode"`    // "attack" | "skill" | "smart"
+	Skills  []string `json:"skills"`  // IDs das habilidades habilitadas
+	Potions []string `json:"potions"` // IDs das poções de HP/MP habilitadas
+	HealAt  int      `json:"heal_at"` // % de HP para usar poção de HP (ex: 50 = abaixo de 50%)
+	ManaAt  int      `json:"mana_at"` // % de MP para usar poção de MP (ex: 30 = abaixo de 30%)
+}
+
+type AutoHuntSession struct {
+	ID          int
+	CharacterID int
+	MapID       string
+	StartedAt   time.Time
+	LastTickAt  time.Time
+	TicksDone   int
+	TotalXP     int
+	TotalGold   int
+	TotalKills  int
+	Status      string
+	SkillConfig AutoHuntSkillConfig
+}
+
+func GetAutoHuntSession(charID int) (*AutoHuntSession, error) {
+	s := &AutoHuntSession{}
+	var skillConfigJSON string
+	err := DB.QueryRow(`
+		SELECT id, character_id, map_id, started_at, last_tick_at,
+		       ticks_done, total_xp, total_gold, total_kills, status,
+		       skill_config::text
+		FROM auto_hunt_sessions WHERE character_id=$1
+	`, charID).Scan(&s.ID, &s.CharacterID, &s.MapID, &s.StartedAt, &s.LastTickAt,
+		&s.TicksDone, &s.TotalXP, &s.TotalGold, &s.TotalKills, &s.Status,
+		&skillConfigJSON)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err == nil {
+		parseSkillConfig(skillConfigJSON, &s.SkillConfig)
+	}
+	return s, err
+}
+
+func StartAutoHunt(charID int, mapID string, cfg AutoHuntSkillConfig) (*AutoHuntSession, error) {
+	cfgJSON, _ := marshalSkillConfig(cfg)
+	s := &AutoHuntSession{}
+	var skillConfigJSON string
+	err := DB.QueryRow(`
+		INSERT INTO auto_hunt_sessions (character_id, map_id, skill_config)
+		VALUES ($1, $2, $3::jsonb)
+		ON CONFLICT (character_id) DO UPDATE
+			SET map_id=$2, started_at=NOW(), last_tick_at=NOW(),
+			    ticks_done=0, total_xp=0, total_gold=0, total_kills=0,
+			    status='running', skill_config=$3::jsonb
+		RETURNING id, character_id, map_id, started_at, last_tick_at,
+		          ticks_done, total_xp, total_gold, total_kills, status,
+		          skill_config::text
+	`, charID, mapID, cfgJSON).Scan(&s.ID, &s.CharacterID, &s.MapID, &s.StartedAt, &s.LastTickAt,
+		&s.TicksDone, &s.TotalXP, &s.TotalGold, &s.TotalKills, &s.Status,
+		&skillConfigJSON)
+	if err == nil {
+		parseSkillConfig(skillConfigJSON, &s.SkillConfig)
+	}
+	return s, err
+}
+
+func UpdateAutoHuntTick(sessionID, xpGain, goldGain int) error {
+	_, err := DB.Exec(`
+		UPDATE auto_hunt_sessions
+		SET last_tick_at=NOW(), ticks_done=ticks_done+1,
+		    total_xp=total_xp+$1, total_gold=total_gold+$2, total_kills=total_kills+1
+		WHERE id=$3
+	`, xpGain, goldGain, sessionID)
+	return err
+}
+
+func StopAutoHunt(charID int, reason string) error {
+	_, err := DB.Exec(`
+		UPDATE auto_hunt_sessions SET status=$1 WHERE character_id=$2
+	`, reason, charID)
+	return err
+}
+
+func GetRunningAutoHunts() ([]AutoHuntSession, error) {
+	rows, err := DB.Query(`
+		SELECT id, character_id, map_id, started_at, last_tick_at,
+		       ticks_done, total_xp, total_gold, total_kills, status,
+		       skill_config::text
+		FROM auto_hunt_sessions WHERE status='running'
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var sessions []AutoHuntSession
+	for rows.Next() {
+		var s AutoHuntSession
+		var skillConfigJSON string
+		if err := rows.Scan(&s.ID, &s.CharacterID, &s.MapID, &s.StartedAt, &s.LastTickAt,
+			&s.TicksDone, &s.TotalXP, &s.TotalGold, &s.TotalKills, &s.Status,
+			&skillConfigJSON); err != nil {
+			return nil, err
+		}
+		parseSkillConfig(skillConfigJSON, &s.SkillConfig)
+		sessions = append(sessions, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return sessions, nil
+}
+
+// ── Skill config JSON helpers ─────────────────────────────
+
+func parseSkillConfig(raw string, cfg *AutoHuntSkillConfig) {
+	if raw == "" {
+		cfg.Mode = "attack"
+		cfg.Skills = []string{}
+		return
+	}
+	// Simple manual JSON parse to avoid importing encoding/json at package level
+	// We use the existing import via marshalSkillConfig
+	if err := jsonUnmarshal([]byte(raw), cfg); err != nil {
+		cfg.Mode = "attack"
+		cfg.Skills = []string{}
+	}
+}
+
+func marshalSkillConfig(cfg AutoHuntSkillConfig) (string, error) {
+	b, err := jsonMarshal(cfg)
+	return string(b), err
+}
+
+// =============================================
+// CHARACTER — full read / write
+// =============================================
+
+func GetCharacter(playerID int64) (*models.Character, error) {
+	char := &models.Character{}
+	err := DB.QueryRow(`
+		SELECT id, player_id, name, race, class, level, experience, experience_next,
+			hp, hp_max, mp, mp_max,
+			COALESCE(energy, 100), COALESCE(energy_max, 100),
+			COALESCE(energy_regen_at, NOW()), COALESCE(diamonds, 0),
+			strength, dexterity, constitution, intelligence,
+			wisdom, charisma, attack, defense, magic_attack, magic_defense, speed,
+			gold, current_map, state,
+			COALESCE(combat_monster_id,''), combat_monster_hp, skill_points,
+			COALESCE(deaths, 0),
+			COALESCE(xp_boost_expiry, '1970-01-01 00:00:00+00'),
+			COALESCE(poison_turns, 0), COALESCE(poison_dmg, 0),
+			COALESCE(combat_monster_poison_turns, 0), COALESCE(combat_monster_poison_dmg, 0)
+		FROM characters WHERE player_id=$1
+	`, playerID).Scan(
+		&char.ID, &char.PlayerID, &char.Name, &char.Race, &char.Class,
+		&char.Level, &char.Experience, &char.ExperienceNext,
+		&char.HP, &char.HPMax, &char.MP, &char.MPMax,
+		&char.Energy, &char.EnergyMax, &char.EnergyRegenAt, &char.Diamonds,
+		&char.Strength, &char.Dexterity, &char.Constitution, &char.Intelligence,
+		&char.Wisdom, &char.Charisma,
+		&char.Attack, &char.Defense, &char.MagicAttack, &char.MagicDefense, &char.Speed,
+		&char.Gold, &char.CurrentMap, &char.State,
+		&char.CombatMonsterID, &char.CombatMonsterHP, &char.SkillPoints,
+		&char.Deaths, &char.XPBoostExpiry,
+		&char.PoisonTurns, &char.PoisonDmg,
+		&char.CombatMonsterPoisonTurns, &char.CombatMonsterPoisonDmg,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return char, err
+}
+
+func CreateCharacter(char *models.Character) error {
+	return DB.QueryRow(`
+		INSERT INTO characters (
+			player_id, name, race, class, level, experience, experience_next,
+			hp, hp_max, mp, mp_max,
+			energy, energy_max, energy_regen_at, diamonds,
+			strength, dexterity, constitution, intelligence,
+			wisdom, charisma, attack, defense, magic_attack, magic_defense, speed,
+			gold, current_map, state
+		) VALUES (
+			$1,$2,$3,$4,$5,$6,$7,
+			$8,$9,$10,$11,
+			$12,$13,$14,$15,
+			$16,$17,$18,$19,
+			$20,$21,$22,$23,$24,$25,$26,
+			$27,$28,$29
+		) RETURNING id
+	`,
+		char.PlayerID, char.Name, char.Race, char.Class,
+		char.Level, char.Experience, char.ExperienceNext,
+		char.HP, char.HPMax, char.MP, char.MPMax,
+		char.Energy, char.EnergyMax, char.EnergyRegenAt, char.Diamonds,
+		char.Strength, char.Dexterity, char.Constitution, char.Intelligence,
+		char.Wisdom, char.Charisma,
+		char.Attack, char.Defense, char.MagicAttack, char.MagicDefense, char.Speed,
+		char.Gold, char.CurrentMap, char.State,
+	).Scan(&char.ID)
+}
+
+func SaveCharacter(char *models.Character) error {
+	// Garante que energy nunca ultrapasse energy_max antes de salvar
+	if char.Energy > char.EnergyMax {
+		char.Energy = char.EnergyMax
+	}
+	if char.Energy < 0 {
+		char.Energy = 0
+	}
+	_, err := DB.Exec(`
+		UPDATE characters SET
+			level=$1, experience=$2, experience_next=$3,
+			hp=$4, hp_max=$5, mp=$6, mp_max=$7,
+			energy=$8, energy_max=$9, energy_regen_at=$10, diamonds=$11,
+			strength=$12, dexterity=$13, constitution=$14, intelligence=$15,
+			wisdom=$16, charisma=$17, attack=$18, defense=$19,
+			magic_attack=$20, magic_defense=$21, speed=$22,
+			gold=$23, current_map=$24, state=$25,
+			combat_monster_id=$26, combat_monster_hp=$27, skill_points=$28,
+			deaths=$29, xp_boost_expiry=$30,
+			poison_turns=$31, poison_dmg=$32,
+			combat_monster_poison_turns=$33, combat_monster_poison_dmg=$34,
+			updated_at=NOW()
+		WHERE id=$35
+	`,
+		char.Level, char.Experience, char.ExperienceNext,
+		char.HP, char.HPMax, char.MP, char.MPMax,
+		char.Energy, char.EnergyMax, char.EnergyRegenAt, char.Diamonds,
+		char.Strength, char.Dexterity, char.Constitution, char.Intelligence,
+		char.Wisdom, char.Charisma,
+		char.Attack, char.Defense, char.MagicAttack, char.MagicDefense, char.Speed,
+		char.Gold, char.CurrentMap, char.State,
+		char.CombatMonsterID, char.CombatMonsterHP, char.SkillPoints,
+		char.Deaths, char.XPBoostExpiry,
+		char.PoisonTurns, char.PoisonDmg,
+		char.CombatMonsterPoisonTurns, char.CombatMonsterPoisonDmg,
+		char.ID,
+	)
+	return err
+}
+
+func DeleteCharacter(playerID int64) error {
+	_, err := DB.Exec("DELETE FROM characters WHERE player_id=$1", playerID)
+	return err
+}
+
+// =============================================
+// SKILLS
+// =============================================
+
+func GetLearnedSkills(charID int) ([]models.CharacterSkill, error) {
+	rows, err := DB.Query(`SELECT id, character_id, skill_id, level FROM character_skills WHERE character_id=$1`, charID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var skills []models.CharacterSkill
+	for rows.Next() {
+		var s models.CharacterSkill
+		if err := rows.Scan(&s.ID, &s.CharacterID, &s.SkillID, &s.Level); err != nil {
+			return nil, err
+		}
+		skills = append(skills, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return skills, nil
+}
+
+func HasSkill(charID int, skillID string) bool {
+	var count int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM character_skills WHERE character_id=$1 AND skill_id=$2`, charID, skillID).Scan(&count); err != nil {
+		return false
+	}
+	return count > 0
+}
+
+func LearnSkill(charID int, skillID string) error {
+	_, err := DB.Exec(`
+		INSERT INTO character_skills (character_id, skill_id) VALUES ($1,$2)
+		ON CONFLICT (character_id, skill_id) DO NOTHING
+	`, charID, skillID)
+	return err
+}
+
+// ResetSkills apaga todas as habilidades aprendidas e retorna os IDs
+// das skills deletadas para o caller calcular os pontos exatos via PointCost.
+func ResetSkills(charID int) (skillIDs []string, err error) {
+	rows, queryErr := DB.Query(`SELECT skill_id FROM character_skills WHERE character_id=$1`, charID)
+	if queryErr != nil {
+		return nil, queryErr
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var sid string
+		if err := rows.Scan(&sid); err != nil {
+			return nil, err
+		}
+		skillIDs = append(skillIDs, sid)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	_, err = DB.Exec(`DELETE FROM character_skills WHERE character_id=$1`, charID)
+	return skillIDs, err
+}
+
+// =============================================
+// INVENTORY
+// =============================================
+
+func GetInventory(charID int) ([]models.InventoryItem, error) {
+	rows, err := DB.Query(`
+		SELECT id, character_id, item_id, item_type, quantity, equipped, COALESCE(slot,'')
+		FROM inventory WHERE character_id=$1 ORDER BY equipped DESC, item_type, item_id
+	`, charID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []models.InventoryItem
+	for rows.Next() {
+		var item models.InventoryItem
+		if err := rows.Scan(&item.ID, &item.CharacterID, &item.ItemID, &item.ItemType, &item.Quantity, &item.Equipped, &item.Slot); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func AddItem(charID int, itemID, itemType string, qty int) error {
+	_, err := DB.Exec(`
+		INSERT INTO inventory (character_id, item_id, item_type, quantity)
+		VALUES ($1,$2,$3,$4)
+		ON CONFLICT (character_id, item_id) DO UPDATE SET quantity = inventory.quantity + $4
+	`, charID, itemID, itemType, qty)
+	return err
+}
+
+func RemoveItem(charID int, itemID string, qty int) error {
+	var current int
+	if err := DB.QueryRow(`SELECT quantity FROM inventory WHERE character_id=$1 AND item_id=$2`, charID, itemID).Scan(&current); err != nil {
+		if err == sql.ErrNoRows {
+			current = 0
+		} else {
+			return err
+		}
+	}
+	if current <= qty {
+		_, err := DB.Exec(`DELETE FROM inventory WHERE character_id=$1 AND item_id=$2`, charID, itemID)
+		return err
+	}
+	_, err := DB.Exec(`UPDATE inventory SET quantity=quantity-$3 WHERE character_id=$1 AND item_id=$2`, charID, itemID, qty)
+	return err
+}
+
+func GetItemCount(charID int, itemID string) int {
+	var count int
+	if err := DB.QueryRow(`SELECT COALESCE(quantity,0) FROM inventory WHERE character_id=$1 AND item_id=$2`, charID, itemID).Scan(&count); err != nil {
+		return 0
+	}
+	return count
+}
+
+func EquipItem(charID int, itemID string, itemType string) error {
+	return EquipItemSlot(charID, itemID, itemType, "")
+}
+
+// EquipItemSlot equips an item into a specific slot, unequipping any previous item in that slot.
+func EquipItemSlot(charID int, itemID string, itemType string, slot string) error {
+	if slot != "" {
+		// Unequip whatever is in this slot
+		if _, err := DB.Exec(`UPDATE inventory SET equipped=false, slot=NULL WHERE character_id=$1 AND slot=$2`, charID, slot); err != nil {
+			return err
+		}
+	} else {
+		// Legacy: unequip by type (for weapon only fallback)
+		if _, err := DB.Exec(`UPDATE inventory SET equipped=false WHERE character_id=$1 AND item_type=$2`, charID, itemType); err != nil {
+			return err
+		}
+	}
+	var err error
+	if slot != "" {
+		_, err = DB.Exec(`UPDATE inventory SET equipped=true, slot=$3 WHERE character_id=$1 AND item_id=$2`, charID, itemID, slot)
+	} else {
+		_, err = DB.Exec(`UPDATE inventory SET equipped=true WHERE character_id=$1 AND item_id=$2`, charID, itemID)
+	}
+	return err
+}
+
+// UnequipSlot removes the equipped item from a specific slot.
+func UnequipSlot(charID int, slot string) error {
+	_, err := DB.Exec(`UPDATE inventory SET equipped=false, slot=NULL WHERE character_id=$1 AND slot=$2`, charID, slot)
+	return err
+}
+
+func UnequipItem(charID int, itemID string) error {
+	_, err := DB.Exec(`UPDATE inventory SET equipped=false WHERE character_id=$1 AND item_id=$2`, charID, itemID)
+	return err
+}
+
+func GetEquippedItems(charID int) ([]models.InventoryItem, error) {
+	rows, err := DB.Query(`
+		SELECT id, character_id, item_id, item_type, quantity, equipped, COALESCE(slot,'')
+		FROM inventory WHERE character_id=$1 AND equipped=true
+	`, charID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []models.InventoryItem
+	for rows.Next() {
+		var item models.InventoryItem
+		if err := rows.Scan(&item.ID, &item.CharacterID, &item.ItemID, &item.ItemType, &item.Quantity, &item.Equipped, &item.Slot); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+// =============================================
+// COMBAT LOG
+// =============================================
+
+func LogCombat(charID int, monsterID, result string, exp, gold int) error {
+	_, err := DB.Exec(`
+		INSERT INTO combat_log (character_id, monster_id, result, exp_gained, gold_gained)
+		VALUES ($1,$2,$3,$4,$5)
+	`, charID, monsterID, result, exp, gold)
+	return err
+}
+
+// =============================================
+// DIAMOND LOG
+// =============================================
+
+func LogDiamond(charID int, amount int, reason string) error {
+	_, err := DB.Exec(`
+		INSERT INTO diamond_log (character_id, amount, reason) VALUES ($1,$2,$3)
+	`, charID, amount, reason)
+	return err
+}
+
+// =============================================
+// DAILY BONUS
+// =============================================
+
+// ClaimDailyBonus returns (diamonds, ok). ok=false if already claimed today.
+func ClaimDailyBonus(charID int) (int, bool) {
+	var lastClaim time.Time
+	err := DB.QueryRow(`SELECT last_claim FROM daily_bonus WHERE character_id=$1`, charID).Scan(&lastClaim)
+	if err == sql.ErrNoRows {
+		lastClaim = time.Time{} // never claimed
+	} else if err != nil {
+		// Falha de leitura no banco: não concede bônus para evitar inconsistências.
+		return 0, false
+	}
+
+	now := time.Now()
+	y1, m1, d1 := lastClaim.Date()
+	y2, m2, d2 := now.Date()
+	if y1 == y2 && m1 == m2 && d1 == d2 {
+		return 0, false // already claimed
+	}
+
+	diamonds := 3
+	if _, err := DB.Exec(`
+		INSERT INTO daily_bonus (character_id, last_claim) VALUES ($1, $2)
+		ON CONFLICT (character_id) DO UPDATE SET last_claim=$2
+	`, charID, now); err != nil {
+		return 0, false
+	}
+	return diamonds, true
+}
+
+// =============================================
+// IMAGE CACHE
+// =============================================
+
+type ImageCache struct{}
+
+func (c ImageCache) SaveFileID(key, fileID string) error {
+	_, err := DB.Exec(`
+		INSERT INTO image_cache (key, file_id) VALUES ($1,$2)
+		ON CONFLICT (key) DO UPDATE SET file_id=$2, updated_at=NOW()
+	`, key, fileID)
+	return err
+}
+
+func (c ImageCache) LoadFileID(key string) (string, bool) {
+	var fileID string
+	err := DB.QueryRow(`SELECT file_id FROM image_cache WHERE key=$1`, key).Scan(&fileID)
+	if err != nil {
+		return "", false
+	}
+	return fileID, true
+}
+
+func (c ImageCache) LoadAll() map[string]string {
+	rows, err := DB.Query(`SELECT key, file_id FROM image_cache`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	result := map[string]string{}
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			continue
+		}
+		result[k] = v
+	}
+	_ = rows.Err()
+	return result
+}
+
+// =============================================
+// DUNGEON OPERATIONS
+// =============================================
+
+type DungeonRun struct {
+	ID             int
+	CharacterID    int
+	DungeonID      string
+	Floor          int
+	State          string
+	MonstersKilled int
+}
+
+func GetActiveDungeonRun(charID int) (*DungeonRun, error) {
+	run := &DungeonRun{}
+	err := DB.QueryRow(`
+		SELECT id, character_id, dungeon_id, floor, state, monsters_killed
+		FROM dungeon_runs WHERE character_id=$1 AND state='active'
+		ORDER BY started_at DESC LIMIT 1
+	`, charID).Scan(&run.ID, &run.CharacterID, &run.DungeonID, &run.Floor, &run.State, &run.MonstersKilled)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return run, err
+}
+
+func CreateDungeonRun(charID int, dungeonID string) (*DungeonRun, error) {
+	run := &DungeonRun{CharacterID: charID, DungeonID: dungeonID, Floor: 1, State: "active"}
+	err := DB.QueryRow(`
+		INSERT INTO dungeon_runs (character_id, dungeon_id, floor, state)
+		VALUES ($1,$2,$3,'active') RETURNING id
+	`, charID, dungeonID, 1).Scan(&run.ID)
+	return run, err
+}
+
+func AdvanceDungeonFloor(runID, newFloor, monstersKilled int) error {
+	_, err := DB.Exec(`
+		UPDATE dungeon_runs SET floor=$1, monsters_killed=monsters_killed+$2 WHERE id=$3
+	`, newFloor, monstersKilled, runID)
+	return err
+}
+
+func FinishDungeonRun(runID int, state string) error {
+	_, err := DB.Exec(`
+		UPDATE dungeon_runs SET state=$1, finished_at=NOW() WHERE id=$2
+	`, state, runID)
+	return err
+}
+
+func UpdateDungeonBest(charID int, dungeonID string, floor int, completed bool) error {
+	completions := 0
+	if completed {
+		completions = 1
+	}
+	_, err := DB.Exec(`
+		INSERT INTO dungeon_best (character_id, dungeon_id, best_floor, completions, updated_at)
+		VALUES ($1,$2,$3,$4,NOW())
+		ON CONFLICT (character_id, dungeon_id) DO UPDATE
+		  SET best_floor=GREATEST(dungeon_best.best_floor,$3),
+		      completions=dungeon_best.completions+$4,
+		      updated_at=NOW()
+	`, charID, dungeonID, floor, completions)
+	return err
+}
+
+func GetDungeonBest(charID int, dungeonID string) (bestFloor, completions int) {
+	DB.QueryRow(`SELECT best_floor, completions FROM dungeon_best WHERE character_id=$1 AND dungeon_id=$2`,
+		charID, dungeonID).Scan(&bestFloor, &completions)
+	return
+}
+
+// =============================================
+// PVP OPERATIONS
+// =============================================
+
+type PVPChallenge struct {
+	ID           int
+	ChallengerID int
+	DefenderID   int
+	StakeGold    int
+	State        string
+	Turn         int
+	ChallengerHP int
+	DefenderHP   int
+	WinnerID     int
+}
+
+type PVPStats struct {
+	CharacterID int
+	Wins        int
+	Losses      int
+	Draws       int
+	Rating      int
+	Streak      int
+	BestStreak  int
+}
+
+func CreatePVPChallenge(challengerID, defenderID, stakeGold, challengerHP, defenderHP int) (*PVPChallenge, error) {
+	ch := &PVPChallenge{
+		ChallengerID: challengerID, DefenderID: defenderID,
+		StakeGold: stakeGold, State: "pending",
+		ChallengerHP: challengerHP, DefenderHP: defenderHP,
+	}
+	err := DB.QueryRow(`
+		INSERT INTO pvp_challenges (challenger_id, defender_id, stake_gold, state, challenger_hp, defender_hp)
+		VALUES ($1,$2,$3,'pending',$4,$5) RETURNING id
+	`, challengerID, defenderID, stakeGold, challengerHP, defenderHP).Scan(&ch.ID)
+	return ch, err
+}
+
+func GetPendingChallenge(defenderID int) (*PVPChallenge, error) {
+	ch := &PVPChallenge{}
+	err := DB.QueryRow(`
+		SELECT id, challenger_id, defender_id, stake_gold, state, turn, challenger_hp, defender_hp, COALESCE(winner_id,0)
+		FROM pvp_challenges
+		WHERE defender_id=$1 AND state='pending' AND expires_at > NOW()
+		ORDER BY created_at DESC LIMIT 1
+	`, defenderID).Scan(&ch.ID, &ch.ChallengerID, &ch.DefenderID, &ch.StakeGold, &ch.State, &ch.Turn, &ch.ChallengerHP, &ch.DefenderHP, &ch.WinnerID)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return ch, err
+}
+
+func GetActivePVPMatch(charID int) (*PVPChallenge, error) {
+	ch := &PVPChallenge{}
+	err := DB.QueryRow(`
+		SELECT id, challenger_id, defender_id, stake_gold, state, turn, challenger_hp, defender_hp, COALESCE(winner_id,0)
+		FROM pvp_challenges
+		WHERE (challenger_id=$1 OR defender_id=$1) AND state='active'
+		ORDER BY created_at DESC LIMIT 1
+	`, charID).Scan(&ch.ID, &ch.ChallengerID, &ch.DefenderID, &ch.StakeGold, &ch.State, &ch.Turn, &ch.ChallengerHP, &ch.DefenderHP, &ch.WinnerID)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return ch, err
+}
+
+func AcceptPVPChallenge(matchID int) error {
+	_, err := DB.Exec(`UPDATE pvp_challenges SET state='active' WHERE id=$1`, matchID)
+	return err
+}
+
+func DeclinePVPChallenge(matchID int) error {
+	_, err := DB.Exec(`UPDATE pvp_challenges SET state='declined' WHERE id=$1`, matchID)
+	return err
+}
+
+func UpdatePVPMatch(matchID, turn, challengerHP, defenderHP int) error {
+	_, err := DB.Exec(`
+		UPDATE pvp_challenges SET turn=$1, challenger_hp=$2, defender_hp=$3 WHERE id=$4
+	`, turn, challengerHP, defenderHP, matchID)
+	return err
+}
+
+func FinishPVPMatch(matchID, winnerID int) error {
+	_, err := DB.Exec(`
+		UPDATE pvp_challenges SET state='finished', winner_id=$1 WHERE id=$2
+	`, winnerID, matchID)
+	return err
+}
+
+func GetOrCreatePVPStats(charID int) (*PVPStats, error) {
+	stats := &PVPStats{CharacterID: charID}
+	err := DB.QueryRow(`
+		SELECT wins, losses, draws, rating, streak, best_streak
+		FROM pvp_stats WHERE character_id=$1
+	`, charID).Scan(&stats.Wins, &stats.Losses, &stats.Draws, &stats.Rating, &stats.Streak, &stats.BestStreak)
+	if err == sql.ErrNoRows {
+		// Create default stats
+		if _, execErr := DB.Exec(`INSERT INTO pvp_stats (character_id) VALUES ($1) ON CONFLICT DO NOTHING`, charID); execErr != nil {
+			return nil, execErr
+		}
+		stats.Rating = 1000
+		return stats, nil
+	}
+	return stats, err
+}
+
+func UpdatePVPStats(charID, wins, losses, draws, rating, streak, bestStreak int) error {
+	_, err := DB.Exec(`
+		INSERT INTO pvp_stats (character_id, wins, losses, draws, rating, streak, best_streak, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
+		ON CONFLICT (character_id) DO UPDATE
+		  SET wins=$2, losses=$3, draws=$4, rating=$5, streak=$6, best_streak=$7, updated_at=NOW()
+	`, charID, wins, losses, draws, rating, streak, bestStreak)
+	return err
+}
+
+// GetRanking returns the global leaderboard (top N)
+func GetRanking(limit int) ([]RankEntry, error) {
+	rows, err := DB.Query(`
+		SELECT c.id, c.name, c.race, c.class, c.level, c.experience,
+		       COALESCE(p.rating, 1000) as pvp_rating,
+		       COALESCE(p.wins, 0) as pvp_wins,
+		       COALESCE((SELECT SUM(completions) FROM dungeon_best WHERE character_id=c.id), 0) as dungeon_completions,
+		       (c.level * 1000 + c.experience + COALESCE(p.rating,1000) + COALESCE(p.wins,0)*50) AS score
+		FROM characters c
+		LEFT JOIN pvp_stats p ON p.character_id = c.id
+		ORDER BY score DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var entries []RankEntry
+	pos := 1
+	for rows.Next() {
+		var e RankEntry
+		if err := rows.Scan(&e.CharID, &e.Name, &e.Race, &e.Class, &e.Level, &e.Experience,
+			&e.PVPRating, &e.PVPWins, &e.DungeonCompletions, &e.Score); err != nil {
+			return nil, err
+		}
+		e.Position = pos
+		pos++
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
+type RankEntry struct {
+	Position           int
+	CharID             int
+	Name               string
+	Race               string
+	Class              string
+	Level              int
+	Experience         int
+	PVPRating          int
+	PVPWins            int
+	DungeonCompletions int
+	Score              int
+}
+
+func GetPlayerRank(charID int) (int, int, error) {
+	var position, score int
+	err := DB.QueryRow(`
+		SELECT position, score FROM (
+			SELECT c.id,
+			       (c.level * 1000 + c.experience + COALESCE(p.rating,1000) + COALESCE(p.wins,0)*50) AS score,
+			       ROW_NUMBER() OVER (ORDER BY (c.level * 1000 + c.experience + COALESCE(p.rating,1000) + COALESCE(p.wins,0)*50) DESC) as position
+			FROM characters c
+			LEFT JOIN pvp_stats p ON p.character_id = c.id
+		) ranked WHERE id=$1
+	`, charID).Scan(&position, &score)
+	if err == sql.ErrNoRows {
+		return 0, 0, nil
+	}
+	return position, score, err
+}
+
+// =============================================
+// PIX PAYMENT OPERATIONS
+// =============================================
+
+func CreatePixPayment(charID int, packageID string, diamonds int, amountBRL float64, txid string, mpPaymentID int64, qrCode string, qrCodeB64 string) error {
+	// Pass NULL when mpPaymentID is 0 to avoid unique constraint violation
+	// (AbacatePay doesn't use numeric payment IDs)
+	var mpID interface{}
+	if mpPaymentID != 0 {
+		mpID = mpPaymentID
+	}
+	_, err := DB.Exec(`
+		INSERT INTO pix_payments
+			(character_id, package_id, diamonds, amount_brl, txid, status, mp_payment_id, qr_code, qr_code_b64, expires_at)
+		VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,$8, NOW() + INTERVAL '30 minutes')
+	`, charID, packageID, diamonds, amountBRL, txid, mpID, qrCode, qrCodeB64)
+	return err
+}
+
+// GetPixPaymentByMPID fetches a payment by Mercado Pago payment ID.
+func GetPixPaymentByMPID(mpPaymentID int64) (*PixPaymentRecord, error) {
+	p := &PixPaymentRecord{}
+	err := DB.QueryRow(`
+		SELECT id, character_id, package_id, diamonds, amount_brl, txid, status,
+		       COALESCE(mp_payment_id, 0), COALESCE(qr_code, ''), COALESCE(qr_code_b64, '')
+		FROM pix_payments WHERE mp_payment_id=$1
+	`, mpPaymentID).Scan(&p.ID, &p.CharacterID, &p.PackageID, &p.Diamonds, &p.AmountBRL, &p.TxID, &p.Status, &p.MPPaymentID, &p.QRCode, &p.QRCodeB64)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return p, err
+}
+
+func GetPixPayment(txid string) (*PixPaymentRecord, error) {
+	p := &PixPaymentRecord{}
+	err := DB.QueryRow(`
+		SELECT id, character_id, package_id, diamonds, amount_brl, txid, status,
+		       COALESCE(mp_payment_id, 0), COALESCE(qr_code, ''), COALESCE(qr_code_b64, '')
+		FROM pix_payments WHERE txid=$1
+	`, txid).Scan(&p.ID, &p.CharacterID, &p.PackageID, &p.Diamonds, &p.AmountBRL, &p.TxID, &p.Status,
+		&p.MPPaymentID, &p.QRCode, &p.QRCodeB64)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return p, err
+}
+
+func GetPendingPixPayments(charID int) ([]PixPaymentRecord, error) {
+	rows, err := DB.Query(`
+		SELECT id, character_id, package_id, diamonds, amount_brl, txid, status,
+		       COALESCE(mp_payment_id, 0), COALESCE(qr_code, ''), COALESCE(qr_code_b64, '')
+		FROM pix_payments
+		WHERE character_id=$1 AND status='pending' AND expires_at > NOW()
+		ORDER BY created_at DESC
+	`, charID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var payments []PixPaymentRecord
+	for rows.Next() {
+		var p PixPaymentRecord
+		if err := rows.Scan(&p.ID, &p.CharacterID, &p.PackageID, &p.Diamonds, &p.AmountBRL, &p.TxID, &p.Status,
+			&p.MPPaymentID, &p.QRCode, &p.QRCodeB64); err != nil {
+			return nil, err
+		}
+		payments = append(payments, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return payments, nil
+}
+
+// GetAllPendingPixPayments returns ALL pending payments (for background polling goroutine).
+func GetAllPendingPixPayments() ([]PixPaymentRecord, error) {
+	rows, err := DB.Query(`
+		SELECT id, character_id, package_id, diamonds, amount_brl, txid, status,
+		       COALESCE(mp_payment_id, 0), COALESCE(qr_code, ''), COALESCE(qr_code_b64, '')
+		FROM pix_payments
+		WHERE status='pending' AND expires_at > NOW() AND mp_payment_id IS NOT NULL
+		ORDER BY created_at ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var payments []PixPaymentRecord
+	for rows.Next() {
+		var p PixPaymentRecord
+		if err := rows.Scan(&p.ID, &p.CharacterID, &p.PackageID, &p.Diamonds, &p.AmountBRL, &p.TxID, &p.Status,
+			&p.MPPaymentID, &p.QRCode, &p.QRCodeB64); err != nil {
+			return nil, err
+		}
+		payments = append(payments, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return payments, nil
+}
+
+// ConfirmPixPaymentByMPID marks a payment as paid using the Mercado Pago payment ID.
+// Called by the MP webhook and the background polling goroutine.
+func ConfirmPixPaymentByMPID(mpPaymentID int64) (charID, diamonds int, err error) {
+	var p PixPaymentRecord
+	var status string
+	err = DB.QueryRow(`
+		SELECT id, character_id, diamonds, status FROM pix_payments WHERE mp_payment_id=$1
+	`, mpPaymentID).Scan(&p.ID, &p.CharacterID, &p.Diamonds, &status)
+	if err != nil {
+		return 0, 0, err
+	}
+	if status != "pending" {
+		return p.CharacterID, 0, nil // already processed
+	}
+	tx, err := DB.Begin()
+	if err != nil {
+		return 0, 0, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	if _, err = tx.Exec(`UPDATE pix_payments SET status='paid', paid_at=NOW() WHERE mp_payment_id=$1`, mpPaymentID); err != nil {
+		return 0, 0, err
+	}
+	if _, err = tx.Exec(`UPDATE characters SET diamonds=diamonds+$1 WHERE id=$2`, p.Diamonds, p.CharacterID); err != nil {
+		return 0, 0, err
+	}
+	if _, err = tx.Exec(`INSERT INTO diamond_log (character_id, amount, reason) VALUES ($1,$2,'pix_mercadopago')`, p.CharacterID, p.Diamonds); err != nil {
+		return 0, 0, err
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, 0, err
+	}
+	return p.CharacterID, p.Diamonds, nil
+}
+
+// ConfirmPixPayment marks payment as paid and grants diamonds.
+// In production this is called by the Pix webhook from your bank.
+func ConfirmPixPayment(txid string) (charID, diamonds int, err error) {
+	var status string
+	var p PixPaymentRecord
+	err = DB.QueryRow(`
+		SELECT id, character_id, diamonds, status FROM pix_payments WHERE txid=$1
+	`, txid).Scan(&p.ID, &p.CharacterID, &p.Diamonds, &status)
+	if err != nil {
+		return 0, 0, err
+	}
+	if status != "pending" {
+		return p.CharacterID, 0, nil // already processed
+	}
+	tx, err := DB.Begin()
+	if err != nil {
+		return 0, 0, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	if _, err = tx.Exec(`UPDATE pix_payments SET status='paid', paid_at=NOW() WHERE txid=$1`, txid); err != nil {
+		return 0, 0, err
+	}
+	if _, err = tx.Exec(`UPDATE characters SET diamonds=diamonds+$1 WHERE id=$2`, p.Diamonds, p.CharacterID); err != nil {
+		return 0, 0, err
+	}
+	if _, err = tx.Exec(`INSERT INTO diamond_log (character_id, amount, reason) VALUES ($1,$2,'pix_payment')`, p.CharacterID, p.Diamonds); err != nil {
+		return 0, 0, err
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, 0, err
+	}
+	return p.CharacterID, p.Diamonds, nil
+}
+
+// GetRecentPixPayments returns the most recent N pix payments (any status).
+func GetRecentPixPayments(limit int) ([]PixPaymentRecord, error) {
+	rows, err := DB.Query(`
+		SELECT id, character_id, package_id, diamonds, amount_brl, txid, status,
+		       COALESCE(mp_payment_id, 0), COALESCE(qr_code, ''), COALESCE(qr_code_b64, '')
+		FROM pix_payments
+		ORDER BY created_at DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var payments []PixPaymentRecord
+	for rows.Next() {
+		var p PixPaymentRecord
+		if err := rows.Scan(&p.ID, &p.CharacterID, &p.PackageID, &p.Diamonds, &p.AmountBRL,
+			&p.TxID, &p.Status, &p.MPPaymentID, &p.QRCode, &p.QRCodeB64); err != nil {
+			return nil, err
+		}
+		payments = append(payments, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return payments, nil
+}
+
+// ConfirmPixPaymentByTxID é um alias de ConfirmPixPayment, usado pelo AbacatePay.
+func ConfirmPixPaymentByTxID(txID string) (charID, diamonds int, err error) {
+	return ConfirmPixPayment(txID)
+}
+
+type PixPaymentRecord struct {
+	ID          int
+	CharacterID int
+	PackageID   string
+	Diamonds    int
+	AmountBRL   float64
+	TxID        string
+	Status      string
+	MPPaymentID int64
+	QRCode      string
+	QRCodeB64   string
+}
+
+// GetCharacterByPlayerID is an alias for GetCharacter (used by GM lookup).
+func GetCharacterByPlayerID(playerID int64) (*models.Character, error) {
+	return GetCharacter(playerID)
+}
+
+// GetCharacterByID for PVP notifications and Pix webhook
+func GetCharacterByID(charID int) (*models.Character, error) {
+	char := &models.Character{}
+	err := DB.QueryRow(`
+		SELECT id, player_id, name, race, class, level, experience, experience_next,
+			hp, hp_max, mp, mp_max,
+			COALESCE(energy, 100), COALESCE(energy_max, 100),
+			COALESCE(energy_regen_at, NOW()), COALESCE(diamonds, 0),
+			strength, dexterity, constitution, intelligence,
+			wisdom, charisma, attack, defense, magic_attack, magic_defense, speed,
+			gold, current_map, state,
+			COALESCE(combat_monster_id,''), combat_monster_hp, skill_points,
+			COALESCE(deaths,0),
+			COALESCE(xp_boost_expiry, '1970-01-01 00:00:00+00'),
+			COALESCE(poison_turns, 0), COALESCE(poison_dmg, 0),
+			COALESCE(combat_monster_poison_turns, 0), COALESCE(combat_monster_poison_dmg, 0)
+		FROM characters WHERE id=$1
+	`, charID).Scan(
+		&char.ID, &char.PlayerID, &char.Name, &char.Race, &char.Class,
+		&char.Level, &char.Experience, &char.ExperienceNext,
+		&char.HP, &char.HPMax, &char.MP, &char.MPMax,
+		&char.Energy, &char.EnergyMax, &char.EnergyRegenAt, &char.Diamonds,
+		&char.Strength, &char.Dexterity, &char.Constitution, &char.Intelligence,
+		&char.Wisdom, &char.Charisma,
+		&char.Attack, &char.Defense, &char.MagicAttack, &char.MagicDefense, &char.Speed,
+		&char.Gold, &char.CurrentMap, &char.State,
+		&char.CombatMonsterID, &char.CombatMonsterHP, &char.SkillPoints,
+		&char.Deaths, &char.XPBoostExpiry,
+		&char.PoisonTurns, &char.PoisonDmg,
+		&char.CombatMonsterPoisonTurns, &char.CombatMonsterPoisonDmg,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return char, err
+}
+
+// SearchCharacterByName finds a character by exact name (for PVP challenges)
+// SearchCharacters returns up to `limit` characters matching the name (partial, case-insensitive).
+func SearchCharacters(name string, limit int) ([]models.Character, error) {
+	rows, err := DB.Query(`
+		SELECT id, player_id, name, race, class, level, experience, experience_next,
+		       hp, hp_max, mp, mp_max, energy, energy_max, energy_regen_at, diamonds,
+		       strength, dexterity, constitution, intelligence, wisdom, charisma,
+		       attack, defense, magic_attack, magic_defense, speed,
+		       gold, current_map, state, combat_monster_id, combat_monster_hp, skill_points, deaths
+		FROM characters WHERE LOWER(name) LIKE LOWER($1) LIMIT $2
+	`, "%"+name+"%", limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var chars []models.Character
+	for rows.Next() {
+		var c models.Character
+		if err := rows.Scan(&c.ID, &c.PlayerID, &c.Name, &c.Race, &c.Class, &c.Level,
+			&c.Experience, &c.ExperienceNext, &c.HP, &c.HPMax, &c.MP, &c.MPMax,
+			&c.Energy, &c.EnergyMax, &c.EnergyRegenAt, &c.Diamonds,
+			&c.Strength, &c.Dexterity, &c.Constitution, &c.Intelligence,
+			&c.Wisdom, &c.Charisma, &c.Attack, &c.Defense,
+			&c.MagicAttack, &c.MagicDefense, &c.Speed,
+			&c.Gold, &c.CurrentMap, &c.State,
+			&c.CombatMonsterID, &c.CombatMonsterHP, &c.SkillPoints, &c.Deaths); err != nil {
+			return nil, err
+		}
+		chars = append(chars, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return chars, nil
+}
+
+// GetRecentPlayers returns up to `limit` players who were active recently,
+// excluding the given characterID (the challenger). Used for the PVP player list.
+func GetRecentPlayers(excludeCharID int, limit int) ([]models.Character, error) {
+	rows, err := DB.Query(`
+		SELECT id, player_id, name, race, class, level, experience, experience_next,
+		       hp, hp_max, mp, mp_max, energy, energy_max, energy_regen_at, diamonds,
+		       strength, dexterity, constitution, intelligence, wisdom, charisma,
+		       attack, defense, magic_attack, magic_defense, speed,
+		       gold, current_map, state, combat_monster_id, combat_monster_hp, skill_points, deaths
+		FROM characters
+		WHERE id != $1 AND is_banned = FALSE
+		ORDER BY updated_at DESC
+		LIMIT $2
+	`, excludeCharID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var chars []models.Character
+	for rows.Next() {
+		var c models.Character
+		if err := rows.Scan(&c.ID, &c.PlayerID, &c.Name, &c.Race, &c.Class, &c.Level,
+			&c.Experience, &c.ExperienceNext, &c.HP, &c.HPMax, &c.MP, &c.MPMax,
+			&c.Energy, &c.EnergyMax, &c.EnergyRegenAt, &c.Diamonds,
+			&c.Strength, &c.Dexterity, &c.Constitution, &c.Intelligence,
+			&c.Wisdom, &c.Charisma, &c.Attack, &c.Defense,
+			&c.MagicAttack, &c.MagicDefense, &c.Speed,
+			&c.Gold, &c.CurrentMap, &c.State,
+			&c.CombatMonsterID, &c.CombatMonsterHP, &c.SkillPoints, &c.Deaths); err != nil {
+			return nil, err
+		}
+		chars = append(chars, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return chars, nil
+}
+
+func SearchCharacterByName(name string) (*models.Character, error) {
+	char := &models.Character{}
+	err := DB.QueryRow(`
+		SELECT id, player_id, name, race, class, level, experience, experience_next,
+			hp, hp_max, mp, mp_max,
+			COALESCE(energy, 100), COALESCE(energy_max, 100),
+			COALESCE(energy_regen_at, NOW()), COALESCE(diamonds, 0),
+			strength, dexterity, constitution, intelligence,
+			wisdom, charisma, attack, defense, magic_attack, magic_defense, speed,
+			gold, current_map, state,
+			COALESCE(combat_monster_id,''), combat_monster_hp, skill_points,
+			COALESCE(deaths,0)
+		FROM characters WHERE LOWER(name)=LOWER($1) LIMIT 1
+	`, name).Scan(
+		&char.ID, &char.PlayerID, &char.Name, &char.Race, &char.Class,
+		&char.Level, &char.Experience, &char.ExperienceNext,
+		&char.HP, &char.HPMax, &char.MP, &char.MPMax,
+		&char.Energy, &char.EnergyMax, &char.EnergyRegenAt, &char.Diamonds,
+		&char.Strength, &char.Dexterity, &char.Constitution, &char.Intelligence,
+		&char.Wisdom, &char.Charisma,
+		&char.Attack, &char.Defense, &char.MagicAttack, &char.MagicDefense, &char.Speed,
+		&char.Gold, &char.CurrentMap, &char.State,
+		&char.CombatMonsterID, &char.CombatMonsterHP, &char.SkillPoints,
+		&char.Deaths,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return char, err
+}
+
+// =============================================
+// PLAYER EXTENDED — BAN SYSTEM + GM TOOLS
+// =============================================
+
+// CharFull is a combined character+player struct for GM display
+type CharFull struct {
+	*models.Character
+	Banned bool
+}
+
+// PlayerRecord is a player row with ban status
+type PlayerRecord struct {
+	ID       int64
+	Username string
+	Banned   bool
+}
+
+func GetAllPlayers(limit int) ([]PlayerRecord, error) {
+	rows, err := DB.Query(`
+		SELECT id, COALESCE(username,''), COALESCE(banned,false)
+		FROM players ORDER BY id DESC LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var players []PlayerRecord
+	for rows.Next() {
+		var p PlayerRecord
+		if err := rows.Scan(&p.ID, &p.Username, &p.Banned); err != nil {
+			return nil, err
+		}
+		players = append(players, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return players, nil
+}
+
+func BanPlayer(playerID int64) error {
+	_, err := DB.Exec(`UPDATE players SET banned=true WHERE id=$1`, playerID)
+	return err
+}
+
+func UnbanPlayer(playerID int64) error {
+	_, err := DB.Exec(`UPDATE players SET banned=false WHERE id=$1`, playerID)
+	return err
+}
+
+func IsPlayerBanned(playerID int64) bool {
+	var banned bool
+	if err := DB.QueryRow(`SELECT COALESCE(banned,false) FROM players WHERE id=$1`, playerID).Scan(&banned); err != nil {
+		return false
+	}
+	return banned
+}
+
+func GMSetGold(charID int, gold int) error {
+	_, err := DB.Exec(`UPDATE characters SET gold=$1 WHERE id=$2`, gold, charID)
+	return err
+}
+
+func GMSetDiamonds(charID int, diamonds int) error {
+	_, err := DB.Exec(`UPDATE characters SET diamonds=$1 WHERE id=$2`, diamonds, charID)
+	return err
+}
+
+// SearchCharacterFullByName returns CharFull with ban status
+func SearchCharacterFullByName(name string) (*CharFull, error) {
+	char, err := SearchCharacterByName(name)
+	if char == nil || err != nil {
+		return nil, err
+	}
+	banned := IsPlayerBanned(char.PlayerID)
+	return &CharFull{Character: char, Banned: banned}, nil
+}
+
+// GetCharacterFullByID returns CharFull with ban status
+func GetCharacterFullByID(charID int) (*CharFull, error) {
+	char, err := GetCharacterByID(charID)
+	if char == nil || err != nil {
+		return nil, err
+	}
+	banned := IsPlayerBanned(char.PlayerID)
+	return &CharFull{Character: char, Banned: banned}, nil
+}
+
+// GetCharacterByID returns a character by ID — but also marks Banned
+// For GM gm.go: it uses GetCharacterByID and needs Banned field —
+// We handle it via CharFull above.

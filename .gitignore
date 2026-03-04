@@ -1,0 +1,8 @@
+.env
+*.exe
+tormenta-bot
+__debug_bin
+.DS_Store
+assets/images/
+backups/
+.claude/
