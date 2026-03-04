@@ -12,14 +12,14 @@ import (
 
 const (
 	EnergyRegenInterval    = 10 * time.Minute // 1 energy every 10 min (normal)
-	EnergyRegenIntervalVIP = 8 * time.Minute  // 1 energy every 8 min (VIP)
+	EnergyRegenIntervalVIP = 5 * time.Minute  // 1 energy every 5 min (VIP)
 	EnergyBaseMax          = 100
 	EnergyBaseMaxVIP       = 200 // VIP has double energy cap
 	EnergyPerLevel         = 0   // sem crescimento de energia por nível
 
 	// Costs (energy → vitals)
-	EnergyPerHP  = 5  // 1 energy = 5 HP recovered
-	EnergyPerMP  = 3  // 1 energy = 3 MP recovered
+	EnergyPerHP = 5 // 1 energy = 5 HP recovered
+	EnergyPerMP = 3 // 1 energy = 3 MP recovered
 
 	// Diamond costs
 	DiamondFullEnergyRefill = 30 // diamonds to fully refill energy
@@ -27,8 +27,8 @@ const (
 	DiamondFullHeal         = 15 // diamonds to fully heal HP+MP
 
 	// Diamond earn rates
-	DiamondBossKillChance  = 25 // % chance boss drops 1 diamond
-	DiamondDailyBonus      = 3  // diamonds per daily login
+	DiamondBossKillChance = 25 // % chance boss drops 1 diamond
+	DiamondDailyBonus     = 3  // diamonds per daily login
 )
 
 // =============================================
@@ -56,7 +56,10 @@ func RegenInterval(isVIP bool) time.Duration {
 // TickEnergy applies accumulated regeneration since last tick.
 // Returns how many energy points were restored.
 func TickEnergy(char *models.Character) int {
-	return TickEnergyVIP(char, false)
+	// Heurística simples e estável: no modelo atual, VIP possui EnergyMax maior
+	// que o cap base normal.
+	isVIP := char.EnergyMax > EnergyBaseMax
+	return TickEnergyVIP(char, isVIP)
 }
 
 // TickEnergyVIP applies accumulated regeneration with VIP-aware interval.
@@ -112,7 +115,8 @@ func TickEnergyVIP(char *models.Character, isVIP bool) int {
 
 // NextRegenIn returns duration until next energy point is gained
 func NextRegenIn(char *models.Character) time.Duration {
-	return NextRegenInVIP(char, false)
+	isVIP := char.EnergyMax > EnergyBaseMax
+	return NextRegenInVIP(char, isVIP)
 }
 
 // NextRegenInVIP returns duration until next energy point, considering VIP.
@@ -237,12 +241,12 @@ var DiamondItems = map[string]DiamondItem{
 	"energy_full": {
 		ID: "energy_full", Name: "Recarga Total de Energia", Emoji: "⚡",
 		Description: "Recupera toda a sua Energia instantaneamente.",
-		Cost: DiamondFullEnergyRefill,
+		Cost:        DiamondFullEnergyRefill,
 	},
 	"hp_full": {
 		ID: "hp_full", Name: "Cura Divina", Emoji: "💖",
 		Description: "Restaura todo o HP e MP instantaneamente.",
-		Cost: DiamondFullHeal,
+		Cost:        DiamondFullHeal,
 	},
 }
 

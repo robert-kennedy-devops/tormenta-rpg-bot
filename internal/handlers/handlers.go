@@ -127,6 +127,9 @@ func HandleMessage(msg *tgbotapi.Message) {
 		return
 	}
 
+	// Aplica regen passiva em qualquer interação de mensagem.
+	tickEnergyForPlayer(userID)
+
 	// Normalize: "/gm@BotName painel" → "/gm painel"
 	if msg.Text == "" && msg.Command() != "" {
 		args := msg.CommandArguments()
@@ -169,6 +172,9 @@ func HandleCallback(cb *tgbotapi.CallbackQuery) {
 	if database.IsPlayerBanned(userID) {
 		return
 	}
+
+	// Aplica regen passiva em qualquer interação de callback.
+	tickEnergyForPlayer(userID)
 
 	// GM callbacks
 	if HandleGMCallback(cb) {
@@ -504,6 +510,15 @@ func HandleCallback(cb *tgbotapi.CallbackQuery) {
 	if screen := screenFromCallback(data); screen != "" {
 		navCurrent[userID] = screen
 	}
+}
+
+func tickEnergyForPlayer(userID int64) {
+	char, _ := database.GetCharacter(userID)
+	if char == nil {
+		return
+	}
+	game.TickEnergy(char)
+	database.SaveCharacter(char)
 }
 
 // =============================================
@@ -960,6 +975,8 @@ func showEnergyMenu(chatID int64, msgID int, userID int64) {
 	} else {
 		regenStr = "✅ Energia *CHEIA*!\n"
 	}
+	regenEvery := game.RegenInterval(char.EnergyMax > game.EnergyBaseMax)
+	regenMinutes := int(regenEvery / time.Minute)
 
 	caption := fmt.Sprintf(
 		"⚡ *Sistema de Energia*\n\n"+
@@ -967,14 +984,14 @@ func showEnergyMenu(chatID int64, msgID int, userID int64) {
 			"*Como funciona:*\n"+
 			"• 1 ⚡ = *%d HP* recuperado\n"+
 			"• 1 ⚡ = *%d MP* recuperado\n"+
-			"• Regenera 1 ⚡ a cada *5 minutos*\n\n"+
+			"• Regenera 1 ⚡ a cada *%d minutos*\n\n"+
 			"*Recuperação disponível:*\n"+
 			"❤️ HP faltando: *%d* → custa *%d* ⚡\n"+
 			"💙 MP faltando: *%d* → custa *%d* ⚡\n"+
 			"💖 Ambos → custa *%d* ⚡\n\n"+
 			"💎 *30 diamantes* = recarga total instantânea",
 		eBar, char.Energy, char.EnergyMax, regenStr,
-		game.EnergyPerHP, game.EnergyPerMP,
+		game.EnergyPerHP, game.EnergyPerMP, regenMinutes,
 		hpMissing, hpCost,
 		mpMissing, mpCost,
 		bothCost,
@@ -2813,8 +2830,8 @@ func showEquipScreen(chatID int64, msgID int, userID int64) {
 			"%s\n"+
 			"%s\n"+
 			"```\n\n"+
-			"❤️ HP:*%d* ⚔️ Atq:*%d* 🔮 MAtq:*%d*\n"+
-			"🛡️ CA:*%d* Def:*%d* 💙 MP:*%d* 💨 Spd:*%d*",
+			"❤️ HP:*%d/%d* ⚔️ Atq:*%d* 🔮 MAtq:*%d*\n"+
+			"🛡️ CA:*%d* Def:*%d* 💙 MP:*%d/%d* 💨 Spd:*%d*",
 		char.Name,
 		game.Races[char.Race].Emoji, game.Classes[char.Class].Emoji+game.Classes[char.Class].Name,
 		slotLabel("weapon", "⚔️", "Arma"),
@@ -2826,8 +2843,8 @@ func showEquipScreen(chatID int64, msgID int, userID int64) {
 		slotLabel("offhand", "🛡️", "Escudo"),
 		slotLabel("accessory1", "💍", "Anel"),
 		slotLabel("accessory2", "📿", "Colar"),
-		char.HPMax, char.Attack, char.MagicAttack,
-		ca, char.Defense, char.MPMax, char.Speed,
+		char.HP, char.HPMax, char.Attack, char.MagicAttack,
+		ca, char.Defense, char.MP, char.MPMax, char.Speed,
 	)
 
 	rows := [][]tgbotapi.InlineKeyboardButton{
@@ -3439,23 +3456,35 @@ func recalculateStats(char *models.Character) {
 		newHPMax += item.HPBonus
 		newMPMax += item.MPBonus
 	}
-	// Apply HP/MP max from equipment (preserve current HP/MP ratio)
-	if newHPMax != char.HPMax && char.HPMax > 0 {
-		ratio := float64(char.HP) / float64(char.HPMax)
+	// Apply HP/MP max from equipment (preserva proporção quando possível).
+	oldHPMax := char.HPMax
+	if oldHPMax > 0 {
+		ratio := float64(char.HP) / float64(oldHPMax)
 		char.HPMax = newHPMax
 		char.HP = int(ratio * float64(newHPMax))
-		if char.HP < 1 {
-			char.HP = 1
-		}
-		if char.HP > char.HPMax {
+	} else {
+		char.HPMax = newHPMax
+		if char.HP <= 0 || char.HP > char.HPMax {
 			char.HP = char.HPMax
 		}
 	}
-	if newMPMax != char.MPMax && char.MPMax > 0 {
-		char.MPMax = newMPMax
-		if char.MP > char.MPMax {
-			char.MP = char.MPMax
-		}
+	if char.HP < 1 {
+		char.HP = 1
+	}
+	if char.HP > char.HPMax {
+		char.HP = char.HPMax
+	}
+
+	oldMPMax := char.MPMax
+	char.MPMax = newMPMax
+	if oldMPMax <= 0 && char.MP <= 0 {
+		char.MP = char.MPMax
+	}
+	if char.MP > char.MPMax {
+		char.MP = char.MPMax
+	}
+	if char.MP < 0 {
+		char.MP = 0
 	}
 }
 

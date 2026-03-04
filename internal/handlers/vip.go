@@ -875,6 +875,23 @@ func doAutoHuntCombat(charID int, session *database.AutoHuntSession) bool {
 	applyAutoPotions(char, session.SkillConfig)
 
 	if char.HP <= 0 {
+		// Token de reviver também protege na auto-caça.
+		if database.GetItemCount(char.ID, "revive_token") > 0 {
+			_ = database.RemoveItem(char.ID, "revive_token", 1)
+			char.HP = char.HPMax
+			char.MP = char.MPMax
+			char.PoisonTurns = 0
+			char.PoisonDmg = 0
+			database.SaveCharacter(char)
+			notifyUser(playerID, fmt.Sprintf(
+				"🔮 *Token de Reviver ativado na caça automática!*\n\n"+
+					"Você foi salvo contra *%s %s*.\n\n"+
+					"❤️ HP: *%d/%d* | 💙 MP: *%d/%d*\n"+
+					"_A caça automática continuará._",
+				monster.Emoji, monster.Name, char.HP, char.HPMax, char.MP, char.MPMax))
+			return true
+		}
+
 		xpLost, goldLost := game.ApplyDeathPenalty(char)
 		database.SaveCharacter(char)
 		database.StopAutoHunt(charID, "stopped")
