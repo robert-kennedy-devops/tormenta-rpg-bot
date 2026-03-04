@@ -91,10 +91,10 @@ func main() {
 	updates := bot.GetUpdatesChan(u)
 	for update := range updates {
 		if update.Message != nil {
-			go handlers.HandleMessage(update.Message)
+			handlers.HandleMessage(update.Message)
 		}
 		if update.CallbackQuery != nil {
-			go handlers.HandleCallback(update.CallbackQuery)
+			handlers.HandleCallback(update.CallbackQuery)
 		}
 	}
 }

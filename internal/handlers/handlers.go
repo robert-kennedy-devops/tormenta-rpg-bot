@@ -71,6 +71,14 @@ func menuBackButton(userID int64, menuDest, fallback string) tgbotapi.InlineKeyb
 	return tgbotapi.NewInlineKeyboardButtonData("⬅️ Voltar", dest)
 }
 
+func isSellTab(tab string) bool {
+	switch tab {
+	case "all", "consumable", "weapon", "armor", "accessory":
+		return true
+	}
+	return false
+}
+
 func screenFromCallback(data string) string {
 	switch {
 	case data == "menu_main",
@@ -331,7 +339,7 @@ func HandleCallback(cb *tgbotapi.CallbackQuery) {
 	case strings.HasPrefix(data, "sell_add_"):
 		rest := strings.TrimPrefix(data, "sell_add_")
 		parts := strings.SplitN(rest, "_", 2)
-		if len(parts) == 2 {
+		if len(parts) == 2 && isSellTab(parts[0]) {
 			char, _ := database.GetCharacter(userID)
 			if char != nil {
 				_ = addSellItemToCart(userID, char.ID, parts[1])
@@ -3955,6 +3963,10 @@ func showSkillBranch(chatID int64, msgID int, userID int64, activeBranch string)
 		}
 		return branchLabel(branchOrder[i]) < branchLabel(branchOrder[j])
 	})
+	if len(branchOrder) == 0 {
+		editPhoto(chatID, msgID, "skills", "❌ Nenhuma árvore de habilidades disponível para esta classe.", bkp("menu_main"))
+		return
+	}
 
 	// Se nenhum ramo selecionado, usa o primeiro
 	if activeBranch == "" {
