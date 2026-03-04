@@ -381,6 +381,50 @@ func SaveCharacter(char *models.Character) error {
 	return err
 }
 
+// SaveCharacterEnergy updates only energy-related fields.
+func SaveCharacterEnergy(charID int, energy int, energyMax int, regenAt time.Time) error {
+	if energy > energyMax {
+		energy = energyMax
+	}
+	if energy < 0 {
+		energy = 0
+	}
+	_, err := DB.Exec(`
+		UPDATE characters
+		SET energy=$1, energy_max=$2, energy_regen_at=$3, updated_at=NOW()
+		WHERE id=$4
+	`, energy, energyMax, regenAt, charID)
+	return err
+}
+
+// GetCharactersNeedingEnergyTick returns characters that are not at full energy.
+func GetCharactersNeedingEnergyTick(limit int) ([]models.Character, error) {
+	rows, err := DB.Query(`
+		SELECT id, energy, energy_max, COALESCE(energy_regen_at, NOW())
+		FROM characters
+		WHERE energy < energy_max
+		ORDER BY energy_regen_at ASC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var chars []models.Character
+	for rows.Next() {
+		var c models.Character
+		if err := rows.Scan(&c.ID, &c.Energy, &c.EnergyMax, &c.EnergyRegenAt); err != nil {
+			return nil, err
+		}
+		chars = append(chars, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return chars, nil
+}
+
 func DeleteCharacter(playerID int64) error {
 	_, err := DB.Exec("DELETE FROM characters WHERE player_id=$1", playerID)
 	return err

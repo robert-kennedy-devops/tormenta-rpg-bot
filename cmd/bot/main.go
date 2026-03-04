@@ -76,6 +76,7 @@ func main() {
 
 	// Start VIP auto hunt worker (ticks every 5 minutes)
 	handlers.StartAutoHuntWorker()
+	handlers.StartEnergyRegenWorker()
 
 	// Start HTTP server for Mercado Pago webhooks (optional, but recommended)
 	webhookPort := os.Getenv("MP_WEBHOOK_PORT")
