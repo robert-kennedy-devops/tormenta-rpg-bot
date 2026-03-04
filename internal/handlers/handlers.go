@@ -79,6 +79,14 @@ func isSellTab(tab string) bool {
 	return false
 }
 
+func isShopTab(tab string) bool {
+	switch tab {
+	case "consumable", "weapon", "armor", "accessory":
+		return true
+	}
+	return false
+}
+
 func screenFromCallback(data string) string {
 	switch {
 	case data == "menu_main",
@@ -105,6 +113,8 @@ func screenFromCallback(data string) string {
 		strings.HasPrefix(data, "inv_equip_"):
 		return "menu_inventory"
 	case strings.HasPrefix(data, "shop_page_"),
+		strings.HasPrefix(data, "shop_tab_"),
+		strings.HasPrefix(data, "shop_back_"),
 		strings.HasPrefix(data, "shop_add_"),
 		strings.HasPrefix(data, "shop_inc_"),
 		strings.HasPrefix(data, "shop_dec_"),
@@ -248,9 +258,9 @@ func HandleCallback(cb *tgbotapi.CallbackQuery) {
 			handleInventoryUnequip(chatID, msgID, userID, parts[0], parts[1])
 		}
 	case data == "menu_skills":
-		showSkillTree(chatID, msgID, userID)
+		showSkillsHome(chatID, msgID, userID)
 	case data == "menu_shop":
-		showShopMenu(chatID, msgID, userID)
+		showShopHome(chatID, msgID, userID)
 	case data == "menu_travel":
 		showTravelMenu(chatID, msgID, userID)
 	case data == "menu_explore":
@@ -293,10 +303,36 @@ func HandleCallback(cb *tgbotapi.CallbackQuery) {
 		handleDailyBonus(chatID, msgID, userID)
 
 	// ── SHOP ────────────────────────────────────────────
+	case data == "shop_tab_consumable":
+		showShopPage(chatID, msgID, userID, "consumable")
+	case data == "shop_tab_weapon":
+		showShopPage(chatID, msgID, userID, "weapon")
+	case data == "shop_tab_armor":
+		showShopPage(chatID, msgID, userID, "armor")
+	case data == "shop_tab_accessory":
+		showShopPage(chatID, msgID, userID, "accessory")
 	case strings.HasPrefix(data, "shop_page_"):
 		showShopPage(chatID, msgID, userID, strings.TrimPrefix(data, "shop_page_"))
+	case strings.HasPrefix(data, "shop_item_"):
+		rest := strings.TrimPrefix(data, "shop_item_")
+		parts := strings.SplitN(rest, "_", 2)
+		if len(parts) == 2 && isShopTab(parts[0]) {
+			showShopItem(chatID, msgID, userID, parts[0], parts[1])
+		} else {
+			// legado: shop_item_<itemID> (adicionava direto ao carrinho)
+			handleShopAddItem(chatID, msgID, userID, rest)
+		}
+	case strings.HasPrefix(data, "shop_back_"):
+		showShopPage(chatID, msgID, userID, strings.TrimPrefix(data, "shop_back_"))
 	case strings.HasPrefix(data, "shop_add_"):
-		handleShopAddItem(chatID, msgID, userID, strings.TrimPrefix(data, "shop_add_"))
+		rest := strings.TrimPrefix(data, "shop_add_")
+		parts := strings.SplitN(rest, "_", 2)
+		if len(parts) == 2 && isShopTab(parts[0]) {
+			_, _ = addShopItemToCart(userID, parts[1])
+			showShopItem(chatID, msgID, userID, parts[0], parts[1])
+		} else {
+			handleShopAddItem(chatID, msgID, userID, rest)
+		}
 	case strings.HasPrefix(data, "shop_inc_"):
 		handleShopChangeQty(chatID, msgID, userID, strings.TrimPrefix(data, "shop_inc_"), +1)
 	case strings.HasPrefix(data, "shop_dec_"):
@@ -309,9 +345,6 @@ func HandleCallback(cb *tgbotapi.CallbackQuery) {
 		handleShopConfirmBuy(chatID, msgID, userID)
 	case data == "shop_cancel_buy":
 		showShopMenu(chatID, msgID, userID)
-	// legado — mantido por sessões em aberto
-	case strings.HasPrefix(data, "shop_item_"):
-		handleShopAddItem(chatID, msgID, userID, strings.TrimPrefix(data, "shop_item_"))
 	case strings.HasPrefix(data, "shop_qty_"):
 		handleShopQty(chatID, msgID, userID, strings.TrimPrefix(data, "shop_qty_"))
 
@@ -1383,7 +1416,56 @@ func handleDailyBonus(chatID int64, msgID int, userID int64) {
 // =============================================
 
 func showShopMenu(chatID int64, msgID int, userID int64) {
-	showShopPage(chatID, msgID, userID, "consumable")
+	// Compat legado.
+	showShopHome(chatID, msgID, userID)
+}
+
+func showShopHome(chatID int64, msgID int, userID int64) {
+	char, _ := database.GetCharacter(userID)
+	if char == nil {
+		return
+	}
+	cart := shopCart[userID]
+	if cart == nil {
+		cart = &models.ShopCart{TabType: "consumable"}
+		shopCart[userID] = cart
+	}
+
+	caption := fmt.Sprintf("🏪 *Loja*\n🪙 *%d* ouro | 💎 *%d* diamantes\n\nSelecione uma categoria:", char.Gold, char.Diamonds)
+	if len(cart.Items) > 0 {
+		total := 0
+		caption += "\n\n🛒 *Carrinho:*\n"
+		for _, ci := range cart.Items {
+			it := game.Items[ci.ItemID]
+			subtotal := it.Price * ci.Qty
+			total += subtotal
+			caption += fmt.Sprintf("  %s %s ×%d = *%d*🪙\n", it.Emoji, it.Name, ci.Qty, subtotal)
+		}
+		caption += fmt.Sprintf("*Total: %d*🪙", total)
+	}
+
+	kb := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🧪 Consumíveis", "shop_tab_consumable"),
+			tgbotapi.NewInlineKeyboardButtonData("⚔️ Armas", "shop_tab_weapon"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🛡️ Armaduras", "shop_tab_armor"),
+			tgbotapi.NewInlineKeyboardButtonData("💍 Acessórios", "shop_tab_accessory"),
+		),
+	)
+	if len(cart.Items) > 0 {
+		kb.InlineKeyboard = append(kb.InlineKeyboard, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(
+				fmt.Sprintf("✅ Ver Carrinho (%d item(ns))", len(cart.Items)),
+				"shop_checkout",
+			),
+		))
+	}
+	kb.InlineKeyboard = append(kb.InlineKeyboard, tgbotapi.NewInlineKeyboardRow(
+		menuBackButton(userID, "menu_shop", "menu_main"),
+	))
+	editPhoto(chatID, msgID, "shop", caption, &kb)
 }
 
 func showShopPage(chatID int64, msgID int, userID int64, pageType string) {
@@ -1400,7 +1482,12 @@ func showShopPage(chatID int64, msgID int, userID int64, pageType string) {
 	cart.TabType = pageType
 
 	tabNames := map[string]string{"consumable": "Consumíveis", "weapon": "Armas", "armor": "Armaduras", "accessory": "Acessórios"}
-	caption := fmt.Sprintf("🏪 *Loja — %s*\n🪙 *%d* ouro | 💎 *%d* diamantes\n\n", tabNames[pageType], char.Gold, char.Diamonds)
+	tabName := tabNames[pageType]
+	if tabName == "" {
+		pageType = "consumable"
+		tabName = tabNames[pageType]
+	}
+	caption := fmt.Sprintf("🏪 *Loja — %s*\n🪙 *%d* ouro | 💎 *%d* diamantes\n\nEscolha um item:", tabName, char.Gold, char.Diamonds)
 
 	// Carrinho resumido no topo
 	if len(cart.Items) > 0 {
@@ -1412,7 +1499,7 @@ func showShopPage(chatID int64, msgID int, userID int64, pageType string) {
 			total += subtotal
 			caption += fmt.Sprintf("  %s %s ×%d = *%d*🪙\n", it.Emoji, it.Name, ci.Qty, subtotal)
 		}
-		caption += fmt.Sprintf("*Total: %d*🪙\n\n", total)
+		caption += fmt.Sprintf("*Total: %d*🪙\n", total)
 	}
 
 	// Lista de itens (somente ouro — sem DiamondPrice exclusivo)
@@ -1453,17 +1540,19 @@ func showShopPage(chatID int64, msgID int, userID int64, pageType string) {
 				break
 			}
 		}
-		cartTag := ""
+		label := fmt.Sprintf("%s %s — %d🪙", item.Emoji, item.Name, item.Price)
 		if inCart > 0 {
-			cartTag = fmt.Sprintf(" [%d no carrinho]", inCart)
+			label += fmt.Sprintf(" [%d]", inCart)
 		}
-		caption += fmt.Sprintf("%s *%s* — *%d*🪙%s\n", item.Emoji, item.Name, item.Price, cartTag)
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(
-				fmt.Sprintf("%s %s %s (+1)", emoji, item.Emoji, item.Name),
-				"shop_add_"+item.ID,
+				fmt.Sprintf("%s %s", emoji, label),
+				"shop_item_"+pageType+"_"+item.ID,
 			),
 		))
+	}
+	if len(itemsSorted) == 0 {
+		caption += "\n_Nenhum item disponível nesta categoria._"
 	}
 
 	// Botão de checkout se há itens no carrinho
@@ -1478,15 +1567,15 @@ func showShopPage(chatID int64, msgID int, userID int64, pageType string) {
 
 	// Tabs de navegação
 	rows = append(rows, []tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardButtonData("🧪 Consumíveis", "shop_page_consumable"),
-		tgbotapi.NewInlineKeyboardButtonData("⚔️ Armas", "shop_page_weapon"),
+		tgbotapi.NewInlineKeyboardButtonData("🧪 Consumíveis", "shop_tab_consumable"),
+		tgbotapi.NewInlineKeyboardButtonData("⚔️ Armas", "shop_tab_weapon"),
 	})
 	rows = append(rows, []tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardButtonData("🛡️ Armaduras", "shop_page_armor"),
-		tgbotapi.NewInlineKeyboardButtonData("💍 Acessórios", "shop_page_accessory"),
+		tgbotapi.NewInlineKeyboardButtonData("🛡️ Armaduras", "shop_tab_armor"),
+		tgbotapi.NewInlineKeyboardButtonData("💍 Acessórios", "shop_tab_accessory"),
 	})
 	rows = append(rows, []tgbotapi.InlineKeyboardButton{
-		menuBackButton(userID, "menu_shop", "menu_main"),
+		tgbotapi.NewInlineKeyboardButtonData("⬅️ Voltar", "menu_shop"),
 	})
 
 	imageKey := assets.ItemTypeImageKey(pageType)
@@ -1494,15 +1583,77 @@ func showShopPage(chatID int64, msgID int, userID int64, pageType string) {
 	editPhoto(chatID, msgID, imageKey, caption, &kb)
 }
 
-// handleShopAddItem adiciona +1 unidade de um item ao carrinho e reexibe a página.
-func handleShopAddItem(chatID int64, msgID int, userID int64, itemID string) {
+func showShopItem(chatID int64, msgID int, userID int64, tab string, itemID string) {
 	char, _ := database.GetCharacter(userID)
 	if char == nil {
 		return
 	}
 	item, ok := game.Items[itemID]
 	if !ok || item.Price <= 0 {
+		showShopPage(chatID, msgID, userID, tab)
 		return
+	}
+	if item.Type != tab {
+		showShopPage(chatID, msgID, userID, tab)
+		return
+	}
+	if item.ClassReq != "" && item.ClassReq != char.Class {
+		showShopPage(chatID, msgID, userID, tab)
+		return
+	}
+	if item.MinLevel > char.Level {
+		showShopPage(chatID, msgID, userID, tab)
+		return
+	}
+
+	inCart := 0
+	cart := shopCart[userID]
+	if cart != nil {
+		for _, ci := range cart.Items {
+			if ci.ItemID == itemID {
+				inCart = ci.Qty
+				break
+			}
+		}
+	}
+	caption := fmt.Sprintf(
+		"🏪 *Item da Loja*\n\n%s *%s*\nPreço: *%d*🪙\nNo carrinho: *%d*\n\n_%s_",
+		item.Emoji, item.Name, item.Price, inCart, item.Description,
+	)
+	rows := [][]tgbotapi.InlineKeyboardButton{
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("➕ Adicionar ao carrinho", "shop_add_"+tab+"_"+item.ID),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("⬅️ Voltar", "shop_back_"+tab),
+		),
+	}
+	if cart != nil && len(cart.Items) > 0 {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(
+				fmt.Sprintf("✅ Ver Carrinho (%d item(ns))", len(cart.Items)),
+				"shop_checkout",
+			),
+		))
+	}
+	kb := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
+	editPhoto(chatID, msgID, assets.ItemTypeImageKey(item.Type), caption, &kb)
+}
+
+func addShopItemToCart(userID int64, itemID string) (string, bool) {
+	item, ok := game.Items[itemID]
+	if !ok || item.Price <= 0 {
+		return "", false
+	}
+	char, _ := database.GetCharacter(userID)
+	if char == nil {
+		return "", false
+	}
+	if item.ClassReq != "" && item.ClassReq != char.Class {
+		return item.Type, false
+	}
+	if item.MinLevel > char.Level {
+		return item.Type, false
 	}
 	cart := shopCart[userID]
 	if cart == nil {
@@ -1521,7 +1672,22 @@ func handleShopAddItem(chatID int64, msgID int, userID int64, itemID string) {
 	if !found {
 		cart.Items = append(cart.Items, models.ShopCartItem{ItemID: itemID, Qty: 1})
 	}
-	showShopPage(chatID, msgID, userID, cart.TabType)
+	return item.Type, true
+}
+
+// handleShopAddItem adiciona +1 unidade de um item ao carrinho e reexibe a página.
+func handleShopAddItem(chatID int64, msgID int, userID int64, itemID string) {
+	itemType, ok := addShopItemToCart(userID, itemID)
+	if !ok {
+		showShopHome(chatID, msgID, userID)
+		return
+	}
+	cart := shopCart[userID]
+	tab := itemType
+	if cart != nil && cart.TabType != "" {
+		tab = cart.TabType
+	}
+	showShopPage(chatID, msgID, userID, tab)
 }
 
 // handleShopChangeQty incrementa ou decrementa qty de item no carrinho.
@@ -3931,7 +4097,73 @@ func branchOrderIndex(class, branch string) int {
 // Cada ramo tem 4 tiers. Custo: T1=1pt T2=1pt T3=2pts T4=3pts
 // O jogador ganha 1 ponto por nível (total 19 pontos ao atingir nível 20).
 func showSkillTree(chatID int64, msgID int, userID int64) {
-	showSkillBranch(chatID, msgID, userID, "")
+	showSkillsHome(chatID, msgID, userID)
+}
+
+func showSkillsHome(chatID int64, msgID int, userID int64) {
+	char, _ := database.GetCharacter(userID)
+	if char == nil {
+		return
+	}
+	learned, _ := database.GetLearnedSkills(char.ID)
+	allSkills := game.GetSkillsForClass(char.Class)
+	branches := map[string]bool{}
+	branchOrder := []string{}
+	for _, sk := range allSkills {
+		if branches[sk.Branch] {
+			continue
+		}
+		branches[sk.Branch] = true
+		branchOrder = append(branchOrder, sk.Branch)
+	}
+	sort.SliceStable(branchOrder, func(i, j int) bool {
+		ii := branchOrderIndex(char.Class, branchOrder[i])
+		jj := branchOrderIndex(char.Class, branchOrder[j])
+		if ii != jj {
+			return ii < jj
+		}
+		return branchLabel(branchOrder[i]) < branchLabel(branchOrder[j])
+	})
+	if len(branchOrder) == 0 {
+		editPhoto(chatID, msgID, "skills", "❌ Nenhuma árvore de habilidades disponível para esta classe.", bkp("menu_main"))
+		return
+	}
+
+	spent := 0
+	for _, l := range learned {
+		if sk, ok := game.Skills[l.SkillID]; ok {
+			pc := sk.PointCost
+			if pc == 0 {
+				pc = 1
+			}
+			spent += pc
+		}
+	}
+	c := game.Classes[char.Class]
+	caption := fmt.Sprintf(
+		"🌟 *Habilidades*\n%s %s | Nível *%d*\n🔵 Pontos: *%d* disponíveis | *%d* gastos\n\nEscolha um ramo:",
+		c.Emoji, c.Name, char.Level, char.SkillPoints, spent,
+	)
+	var rows [][]tgbotapi.InlineKeyboardButton
+	var branchBtns []tgbotapi.InlineKeyboardButton
+	for _, b := range branchOrder {
+		branchBtns = append(branchBtns, tgbotapi.NewInlineKeyboardButtonData(
+			fmt.Sprintf("%s %s", branchEmoji(b), branchLabel(b)),
+			"skill_branch_"+b,
+		))
+	}
+	for i := 0; i < len(branchBtns); i += 3 {
+		end := i + 3
+		if end > len(branchBtns) {
+			end = len(branchBtns)
+		}
+		rows = append(rows, branchBtns[i:end])
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("🏰 Menu", "menu_main"),
+	))
+	kb := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
+	editPhoto(chatID, msgID, "skills", caption, &kb)
 }
 
 func showSkillBranch(chatID int64, msgID int, userID int64, activeBranch string) {
@@ -4082,6 +4314,7 @@ func showSkillBranch(chatID int64, msgID int, userID int64, activeBranch string)
 	}
 
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("⬅️ Habilidades", "menu_skills"),
 		tgbotapi.NewInlineKeyboardButtonData("🏰 Menu", "menu_main"),
 	))
 
