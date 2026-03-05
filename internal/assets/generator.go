@@ -403,6 +403,12 @@ func getAllImageSpecs() []imageSpec {
 			borderColor: c(80, 200, 110),
 			symbol: potionItemSymbol,
 		},
+		{
+			path: "items/accessories.png",
+			bg1: c(45, 25, 55), bg2: c(75, 40, 90), accent: c(220, 170, 240),
+			borderColor: c(200, 140, 220),
+			symbol: coinSymbol,
+		},
 	}
 }
 

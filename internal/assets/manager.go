@@ -79,6 +79,7 @@ var ImageKey = map[string]string{
 	"item_weapon":     "items/weapons.png",
 	"item_armor":      "items/armors.png",
 	"item_consumable": "items/consumables.png",
+	"item_accessory":  "items/accessories.png",
 }
 
 // Manager handles image paths and file_id caching

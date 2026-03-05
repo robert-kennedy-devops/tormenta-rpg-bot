@@ -115,8 +115,9 @@ func showVIPPanel(chatID int64, msgID int, userID int64) {
 		elapsed := time.Since(session.StartedAt)
 		huntStatus = fmt.Sprintf("🏹 Caçando em *%s*", game.Maps[session.MapID].Name)
 		huntDetails = fmt.Sprintf(
-			"\n⏱️ Há: *%s*\n⚔️ Kills: *%d* | ✨ +*%d* XP | 🪙 +*%d*\n🎯 Modo: *%s*",
+			"\n⏱️ Há: *%s*\n⚔️ Kills: *%d* | ✨ +*%d* XP | 🪙 +*%d*\n⭐ Nível: *%d* | 💎 Diamantes: *%d*\n🎯 Modo: *%s*",
 			formatDuration(elapsed), session.TotalKills, session.TotalXP, session.TotalGold,
+			char.Level, char.Diamonds,
 			skillModeLabel(session.SkillConfig.Mode),
 		)
 	}
@@ -526,11 +527,13 @@ func handleAutoHuntStart(chatID int64, msgID int, userID int64, mapID string, cf
 			"📍 Área: *%s %s*\n"+
 			"⚔️ Modo: *%s*%s%s\n"+
 			"⚡ Energia: *%d*/%d\n"+
-			"❤️ HP: *%d*/%d | 🔵 MP: *%d*/%d\n\n"+
+			"❤️ HP: *%d*/%d | 🔵 MP: *%d*/%d\n"+
+			"⭐ Nível: *%d* | 💎 Diamantes: *%d*\n\n"+
 			"_Seu personagem está caçando continuamente. "+
-			"Você será notificado ao parar ou quando a energia acabar._",
+			"Abra o relatório para acompanhar evolução em tempo real._",
 			m.Emoji, m.Name, modeLabel, skillSummary, potionSummary,
-			char.Energy, char.EnergyMax, char.HP, char.HPMax, char.MP, char.MPMax),
+			char.Energy, char.EnergyMax, char.HP, char.HPMax, char.MP, char.MPMax,
+			char.Level, char.Diamonds),
 		&kb)
 
 	log.Printf("[AutoHunt] Started charID=%d map=%s mode=%s skills=%v sessionID=%d",
@@ -542,42 +545,10 @@ func handleAutoHuntStop(chatID int64, msgID int, userID int64) {
 	if char == nil {
 		return
 	}
-	session, _ := database.GetAutoHuntSession(char.ID)
-	if session == nil || session.Status != "running" {
-		showVIPPanel(chatID, msgID, userID)
-		return
-	}
 	database.StopAutoHunt(char.ID, "stopped")
 	char.State = "idle"
 	database.SaveCharacter(char)
-
-	elapsed := time.Since(session.StartedAt)
-	m := game.Maps[session.MapID]
-
-	// Resumo de poções usadas
-	potionSummary := ""
-	if len(session.SkillConfig.Potions) > 0 {
-		potionSummary = fmt.Sprintf("\n🧪 Poções configuradas: *%d tipo(s)*", len(session.SkillConfig.Potions))
-	}
-
-	editPhoto(chatID, msgID, "menu",
-		fmt.Sprintf("⏹️ *Caça automática encerrada!*\n\n"+
-			"📍 Área: *%s %s*\n"+
-			"⏱️ Duração: *%s*\n\n"+
-			"📊 *Resultado:*\n"+
-			"⚔️ Kills: *%d*\n"+
-			"✨ XP ganho: *+%d*\n"+
-			"🪙 Ouro ganho: *+%d*%s\n\n"+
-			"❤️ HP: *%d*/%d | 🔵 MP: *%d*/%d\n"+
-			"⚡ Energia restante: *%d*/%d",
-			m.Emoji, m.Name, formatDuration(elapsed),
-			session.TotalKills, session.TotalXP, session.TotalGold, potionSummary,
-			char.HP, char.HPMax, char.MP, char.MPMax,
-			char.Energy, char.EnergyMax),
-		&tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{
-			{tgbotapi.NewInlineKeyboardButtonData("👑 Painel VIP", "menu_vip"),
-				tgbotapi.NewInlineKeyboardButtonData("🏰 Menu", "menu_main")},
-		}})
+	editMainMenuPhoto(chatID, msgID, userID)
 }
 
 func handleAutoHuntReport(chatID int64, msgID int, userID int64) {
@@ -618,7 +589,8 @@ func handleAutoHuntReport(chatID int64, msgID int, userID int64) {
 			"✨ XP total: *+%d*\n"+
 			"🪙 Ouro total: *+%d*\n\n"+
 			"❤️ HP: *%d*/%d | 🔵 MP: *%d*/%d\n"+
-			"⚡ Energia: *%d*/%d\n\n"+
+			"⚡ Energia: *%d*/%d\n"+
+			"⭐ Nível: *%d* | 💎 Diamantes: *%d*\n\n"+
 			"🎲 *Combate (d20)*\n🛡️ CA: *%d* | 🎯 Bônus ataque: *+%d*",
 			statusEmoji, m.Emoji, m.Name,
 			skillModeLabel(session.SkillConfig.Mode), potionInfo,
@@ -626,6 +598,7 @@ func handleAutoHuntReport(chatID int64, msgID int, userID int64) {
 			session.TotalKills, session.TotalXP, session.TotalGold,
 			char.HP, char.HPMax, char.MP, char.MPMax,
 			char.Energy, char.EnergyMax,
+			char.Level, char.Diamonds,
 			playerCA, atkBonus),
 		&tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{
 			{tgbotapi.NewInlineKeyboardButtonData("🔄 Atualizar", "vip_hunt_report"),
@@ -926,14 +899,11 @@ func doAutoHuntCombat(charID int, session *database.AutoHuntSession) bool {
 	if monster.DiamondChance > 0 && rand.Intn(100) < monster.DiamondChance {
 		char.Diamonds++
 		database.LogDiamond(char.ID, 1, "autohunt_drop_"+monster.ID)
-		notifyUser(playerID, fmt.Sprintf("💎 *Diamante dropado!* %s %s durante a caça automática.", monster.Emoji, monster.Name))
 	}
 
 	if lvlUp := game.CheckLevelUp(char); lvlUp != nil {
 		game.ApplyLevelUp(char, lvlUp)
 		char.EnergyMax = game.MaxEnergyVIP(char.Level)
-		notifyUser(playerID, fmt.Sprintf("🎉 *NÍVEL UP!* Nível *%d* alcançado durante a caça automática!\n\n❤️ HP: *%d*/%d | 🔵 MP: *%d*/%d",
-			lvlUp.NewLevel, char.HP, char.HPMax, char.MP, char.MPMax))
 	}
 
 	database.SaveCharacter(char)
