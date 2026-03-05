@@ -24,11 +24,29 @@ func NewManager() *Manager {
 
 func (m *Manager) Start(enablePixPolling bool) {
 	go m.energyWorker(2 * time.Minute)
+	go m.autoHuntWorker(1 * time.Minute)
 	go m.dungeonCleanupWorker(15 * time.Minute)
 	go m.auctionCleanupWorker(20 * time.Minute)
 	go m.eventWorker(1 * time.Minute)
 	if enablePixPolling {
 		go m.pixWorker(15 * time.Second)
+	}
+}
+
+func (m *Manager) autoHuntWorker(interval time.Duration) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for range t.C {
+		sessions, err := database.GetRunningAutoHunts()
+		if err != nil {
+			log.Printf("[workers.auto_hunt] fetch error: %v", err)
+			continue
+		}
+		// Offline auto-hunt reconciliation is triggered by user interactions.
+		// Worker keeps observability and can host future async maintenance tasks.
+		if len(sessions) > 0 {
+			log.Printf("[workers.auto_hunt] running_sessions=%d", len(sessions))
+		}
 	}
 }
 

@@ -13,13 +13,17 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/tormenta-bot/internal/assets"
+	"github.com/tormenta-bot/internal/cache"
 	"github.com/tormenta-bot/internal/database"
 	"github.com/tormenta-bot/internal/drops"
 	"github.com/tormenta-bot/internal/game"
 	geconomy "github.com/tormenta-bot/internal/game/economy"
 	menukit "github.com/tormenta-bot/internal/menu"
 	"github.com/tormenta-bot/internal/models"
+	"github.com/tormenta-bot/internal/repository"
+	coresvc "github.com/tormenta-bot/internal/service"
 	"github.com/tormenta-bot/internal/services/anti_cheat"
+	"github.com/tormenta-bot/internal/telemetry"
 )
 
 var Bot *tgbotapi.BotAPI
@@ -29,14 +33,18 @@ var Bot *tgbotapi.BotAPI
 // =============================================
 
 var (
-	creationState = map[int64]map[string]string{}    // char creation flow
-	shopQtyState  = map[int64]*models.ShopQtyState{} // pending buy qty selection (legado)
-	shopCart      = map[int64]*models.ShopCart{}     // carrinho multi-item
-	sellCart      = map[int64]*models.SellCart{}     // seleção multi-venda
-	navCurrent    = map[int64]string{}               // tela atual por usuário (navegação)
-	navBack       = map[int64]map[string]string{}    // destino de voltar por menu dinâmico
-	callbackGuard = anti_cheat.NewCallbackGuard()
-	stateGuard    = anti_cheat.NewTransitionGuard()
+	creationState  = map[int64]map[string]string{}    // char creation flow
+	shopQtyState   = map[int64]*models.ShopQtyState{} // pending buy qty selection (legado)
+	shopCart       = map[int64]*models.ShopCart{}     // carrinho multi-item
+	sellCart       = map[int64]*models.SellCart{}     // seleção multi-venda
+	navCurrent     = map[int64]string{}               // tela atual por usuário (navegação)
+	navBack        = map[int64]map[string]string{}    // destino de voltar por menu dinâmico
+	callbackGuard  = anti_cheat.NewCallbackGuard()
+	stateGuard     = anti_cheat.NewTransitionGuard()
+	securitySvc    = coresvc.NewSecurityService(repository.NewSQLRepository())
+	gameCache      = cache.NewGameCache()
+	rankingSvc     = coresvc.NewRankingService(gameCache)
+	configCacheSvc = coresvc.NewConfigCacheService(gameCache)
 )
 
 func dynamicPricingEnabled() bool {
@@ -167,7 +175,16 @@ func screenFromCallback(data string) string {
 
 func HandleMessage(msg *tgbotapi.Message) {
 	userID := msg.From.ID
-	database.UpsertPlayer(userID, msg.From.UserName)
+	unlock := securitySvc.LockPlayer(userID)
+	defer unlock()
+	if !securitySvc.AllowUserAction(userID, 24, 2*time.Second) {
+		return
+	}
+	_ = securitySvc.UpsertPlayer(userID, msg.From.UserName)
+	telemetry.Track(userID, 0, telemetry.EventPlayerLogin, map[string]interface{}{
+		"username": msg.From.UserName,
+		"kind":     "message",
+	})
 
 	// Check if banned
 	if banned := database.IsPlayerBanned(userID); banned {
@@ -209,6 +226,12 @@ func HandleMessage(msg *tgbotapi.Message) {
 
 func HandleCallback(cb *tgbotapi.CallbackQuery) {
 	userID := cb.From.ID
+	unlock := securitySvc.LockPlayer(userID)
+	defer unlock()
+	if !securitySvc.AllowUserAction(userID, 36, 2*time.Second) {
+		Bot.Request(tgbotapi.NewCallback(cb.ID, "Muitas ações, aguarde um instante"))
+		return
+	}
 	chatID := cb.Message.Chat.ID
 	msgID := cb.Message.MessageID
 	data := cb.Data
@@ -1392,20 +1415,7 @@ func showShopPage(chatID int64, msgID int, userID int64, pageType string) {
 
 	// Lista de itens (somente ouro — sem DiamondPrice exclusivo)
 	var rows [][]tgbotapi.InlineKeyboardButton
-	var itemsSorted []models.Item
-	for _, item := range game.Items {
-		if item.Type != pageType || item.MinLevel > char.Level {
-			continue
-		}
-		if item.ClassReq != "" && item.ClassReq != char.Class {
-			continue
-		}
-		// Excluir itens que só se vendem com diamante (Price == 0)
-		if item.Price <= 0 {
-			continue
-		}
-		itemsSorted = append(itemsSorted, item)
-	}
+	itemsSorted := configCacheSvc.ShopItemsByType(pageType, char.Level, char.Class)
 	// Ordenar por nível mínimo depois nome
 	sort.Slice(itemsSorted, func(i, j int) bool {
 		if itemsSorted[i].MinLevel != itemsSorted[j].MinLevel {

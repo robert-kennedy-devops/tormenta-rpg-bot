@@ -64,6 +64,7 @@ ASSETS_DIR=./assets/images           # Diretório de imagens geradas
 DUNGEON_PROCEDURAL_ENABLED=false     # true=gera dungeons procedurais (5-10 salas)
 ABACATEPAY_WEBHOOK_SECRET=change-me  # valida header X-AbacatePay-Secret (opcional)
 ECONOMY_DYNAMIC_PRICING=false        # preço dinâmico progressivo na loja NPC
+TELEMETRY_ENABLED=false              # analytics opcionais (login/dungeon/forge/pix)
 ```
 
 **Importante:** nunca faça commit do arquivo `.env`. Se você chegou a compartilhar tokens reais (Telegram/AbacatePay), faça **rotação** imediata no painel correspondente.
@@ -72,7 +73,7 @@ ECONOMY_DYNAMIC_PRICING=false        # preço dinâmico progressivo na loja NPC
 
 ## Banco de dados
 
-O projeto usa **migrações incrementais** em `migrations/001_init.sql` até `migrations/018_economy_usage_stats.sql`.
+O projeto usa **migrações incrementais** em `migrations/001_init.sql` até `migrations/019_perf_indexes_analytics.sql`.
 
 Para subir do zero (manual), aplique os `.sql` em ordem:
 
@@ -90,6 +91,7 @@ Evoluções recentes de schema:
 - `016_energy_timestamp.sql`: energia com cálculo por timestamp (`last_energy_update`) sem worker de regen.
 - `017_player_timers.sql`: timers genéricos por jogador (`player_timers`) para cooldowns/sistemas.
 - `018_economy_usage_stats.sql`: estatísticas de compra para economia dinâmica (`item_usage_stats`).
+- `019_perf_indexes_analytics.sql`: índices de performance + tabela opcional de analytics (`analytics_events`).
 
 ## Atualizações recentes
 
@@ -114,6 +116,10 @@ Evoluções recentes de schema:
   - Serviço de pagamento idempotente em `internal/services/payment`.
   - Camada anti-cheat em `internal/services/anti_cheat` (duplicidade de callback e transições inválidas).
   - Eventos globais em `internal/systems/events` (Blood Moon, Tormenta Storm, Double Drop).
+  - Novas camadas incrementais: `internal/repository`, `internal/service`, `internal/engine`, `internal/worker`.
+  - Segurança adicional por usuário: mutex por player + rate limit por usuário nos handlers.
+  - Cache opcional TTL para ranking/loja/config de dungeon.
+  - Telemetria opcional para `player_login`, `dungeon_clear`, `item_upgrade`, `pix_purchase`.
 - Navegação:
   - Botões `⬅️ Voltar` padronizados com destino contextual (inventário, loja, habilidades, vender).
   - `🛒 Loja` e `💰 Vender` disponíveis de forma fixa no menu principal.
@@ -141,6 +147,7 @@ Evoluções recentes de schema:
 | `auto_hunt_sessions` | Sessões de caça automática VIP |
 | `player_timers` | Timers/cooldowns genéricos por jogador |
 | `item_usage_stats` | Estatística de uso para precificação dinâmica |
+| `analytics_events` | Eventos opcionais de telemetria |
 | `diamond_log` | Log de transações de diamantes |
 | `combat_log` | Histórico de combates |
 | `daily_bonus` | Controle de bônus diário |
@@ -205,6 +212,18 @@ tormenta-bot/
 │   │       └── world_events.go # Eventos globais temporários
 │   ├── explore/
 │   │   └── events.go           # Eventos aleatórios de exploração
+│   ├── engine/
+│   │   └── state_guard.go      # Validação de transição de estado do jogo
+│   ├── repository/
+│   │   ├── interfaces.go       # Contratos de acesso a dados
+│   │   └── sql_repository.go   # Adapter SQL sobre internal/database
+│   ├── service/
+│   │   ├── security.go         # Mutex por player + rate limit por usuário
+│   │   ├── payment.go          # Facade de confirmação de pagamento
+│   │   ├── ranking.go          # Ranking com cache opcional
+│   │   └── config_cache.go     # Cache opcional de loja/dungeon config
+│   ├── worker/
+│   │   └── manager.go          # Camada compatível para workers centralizados
 │   ├── menu/
 │   │   ├── engine.go           # Helpers de botões/linhas/teclados inline
 │   │   ├── main_menu.go        # Menu principal
@@ -226,6 +245,15 @@ tormenta-bot/
 │   │       └── guard.go        # Guards de callback e transição de estado
 │   ├── timers/
 │   │   └── store.go            # Persistência de timers/cooldowns
+│   ├── cache/
+│   │   ├── ttl_cache.go        # Cache TTL genérico
+│   │   └── game_cache.go       # Cache de ranking/loja/dungeon
+│   ├── telemetry/
+│   │   └── telemetry.go        # Analytics opcionais
+│   ├── utils/
+│   │   ├── config/             # Loader de configurações por env
+│   │   ├── logger/             # Logger estruturado
+│   │   └── scheduler/          # Job scheduler simples por ticker
 │   └── models/
 │       └── models.go           # Structs: Character, Player, Item, Monster...
 ├── migrations/
@@ -236,7 +264,8 @@ tormenta-bot/
 │   ├── 015_player_items.sql
 │   ├── 016_energy_timestamp.sql
 │   ├── 017_player_timers.sql
-│   └── 018_economy_usage_stats.sql
+│   ├── 018_economy_usage_stats.sql
+│   └── 019_perf_indexes_analytics.sql
 ├── scripts/
 │   ├── update.ps1              # Atualização com backup (Windows)
 │   └── update.sh               # Atualização com backup (Linux/macOS)

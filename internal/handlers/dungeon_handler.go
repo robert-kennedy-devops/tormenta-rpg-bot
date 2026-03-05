@@ -16,6 +16,7 @@ import (
 	"github.com/tormenta-bot/internal/game"
 	menukit "github.com/tormenta-bot/internal/menu"
 	"github.com/tormenta-bot/internal/models"
+	"github.com/tormenta-bot/internal/telemetry"
 )
 
 const proceduralDungeonEnv = "DUNGEON_PROCEDURAL_ENABLED"
@@ -623,6 +624,13 @@ func handleDungeonMonsterDeath(chatID int64, msgID int, char *models.Character, 
 		database.FinishDungeonRun(run.ID, "completed")
 		database.UpdateDungeonBest(char.ID, run.DungeonID, maxFloors, true)
 		database.SaveCharacter(char)
+		telemetry.Track(char.PlayerID, char.ID, telemetry.EventDungeonClear, map[string]interface{}{
+			"dungeon_id":      run.DungeonID,
+			"floors_cleared":  maxFloors,
+			"reward_gold":     rewardGold,
+			"reward_diamonds": rewardDiamonds,
+			"procedural":      isProceduralDungeonEnabled(),
+		})
 
 		itemStr := ""
 		if rewardItem != "" {

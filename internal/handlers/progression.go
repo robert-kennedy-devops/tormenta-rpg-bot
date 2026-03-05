@@ -12,6 +12,7 @@ import (
 	"github.com/tormenta-bot/internal/forge"
 	"github.com/tormenta-bot/internal/game"
 	"github.com/tormenta-bot/internal/items"
+	"github.com/tormenta-bot/internal/telemetry"
 )
 
 func showForgeMenu(chatID int64, msgID int, userID int64) {
@@ -157,16 +158,37 @@ func handleForgeTry(chatID int64, msgID int, userID int64, itemID string) {
 	switch out.Status {
 	case forge.OutcomeSuccess:
 		_ = database.UpdatePlayerItemForge(progress.InstanceID, out.NewLevel, false)
+		telemetry.Track(char.PlayerID, char.ID, telemetry.EventItemUpgrade, map[string]interface{}{
+			"item_id":     itemID,
+			"from_level":  out.OldLevel,
+			"to_level":    out.NewLevel,
+			"status":      string(out.Status),
+			"instance_id": progress.InstanceID,
+		})
 		editPhoto(chatID, msgID, "shop",
 			fmt.Sprintf("✅ Forja bem-sucedida!\n\n%s *%s* agora está em *+%d*.", item.Emoji, item.Name, out.NewLevel),
 			bkp("menu_forge"))
 	case forge.OutcomeBroken:
 		_ = database.UpdatePlayerItemForge(progress.InstanceID, out.NewLevel, true)
 		_ = database.RemoveItem(char.ID, itemID, 1)
+		telemetry.Track(char.PlayerID, char.ID, telemetry.EventItemUpgrade, map[string]interface{}{
+			"item_id":     itemID,
+			"from_level":  out.OldLevel,
+			"to_level":    out.NewLevel,
+			"status":      string(out.Status),
+			"instance_id": progress.InstanceID,
+		})
 		editPhoto(chatID, msgID, "shop",
 			fmt.Sprintf("💥 Forja falhou e o item quebrou!\n\n%s *%s* foi destruído.", item.Emoji, item.Name),
 			bkp("menu_forge"))
 	default:
+		telemetry.Track(char.PlayerID, char.ID, telemetry.EventItemUpgrade, map[string]interface{}{
+			"item_id":     itemID,
+			"from_level":  out.OldLevel,
+			"to_level":    out.NewLevel,
+			"status":      string(out.Status),
+			"instance_id": progress.InstanceID,
+		})
 		editPhoto(chatID, msgID, "shop",
 			fmt.Sprintf("⚠️ Forja falhou.\n\n%s *%s* permanece em *+%d*.", item.Emoji, item.Name, out.NewLevel),
 			bkp("menu_forge"))

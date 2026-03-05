@@ -12,6 +12,7 @@ import (
 	"github.com/tormenta-bot/internal/game"
 	menukit "github.com/tormenta-bot/internal/menu"
 	"github.com/tormenta-bot/internal/services/payment"
+	"github.com/tormenta-bot/internal/telemetry"
 )
 
 var pixPaymentService = payment.NewService()
@@ -199,6 +200,13 @@ func handlePixCheck(chatID int64, msgID int, userID int64) {
 			res, err2 := pixPaymentService.ConfirmByTxID(p.TxID, "check")
 			if err2 == nil && res.Diamonds > 0 {
 				credited += res.Diamonds
+				telemetry.Track(res.PlayerID, res.CharacterID, telemetry.EventPixPurchase, map[string]interface{}{
+					"txid":     p.TxID,
+					"source":   "check",
+					"diamonds": res.Diamonds,
+					"amount":   p.AmountBRL,
+					"package":  p.PackageID,
+				})
 				log.Printf("[PIX] Credited %d diamonds to charID %d via check (txID=%s)", res.Diamonds, res.CharacterID, p.TxID)
 			}
 		}
@@ -276,6 +284,11 @@ func HandleAbacateWebhookNotification(abacateID string) (playerID int64, diamond
 	if res.Diamonds == 0 {
 		return res.PlayerID, 0, nil
 	}
+	telemetry.Track(res.PlayerID, res.CharacterID, telemetry.EventPixPurchase, map[string]interface{}{
+		"txid":     abacateID,
+		"source":   "webhook",
+		"diamonds": res.Diamonds,
+	})
 
 	// Notify GM about the payment
 	go func() {
@@ -327,6 +340,13 @@ func pollPendingPixPayments() {
 		if err != nil || res.Diamonds == 0 {
 			continue
 		}
+		telemetry.Track(res.PlayerID, res.CharacterID, telemetry.EventPixPurchase, map[string]interface{}{
+			"txid":     p.TxID,
+			"source":   "poll",
+			"diamonds": res.Diamonds,
+			"amount":   p.AmountBRL,
+			"package":  p.PackageID,
+		})
 		log.Printf("[PIX] Poll confirmed %d diamonds for charID %d (txID=%s)", res.Diamonds, res.CharacterID, p.TxID)
 
 		// Notify player via Telegram

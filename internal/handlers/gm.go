@@ -734,7 +734,7 @@ func gmShowBannedInline(chatID int64, msgID int) {
 }
 
 func gmShowRankingInline(chatID int64, msgID int) {
-	entries, _ := database.GetRanking(15)
+	entries, _ := rankingSvc.Top(15)
 	text := "🏆 *Top 15 Jogadores*\n\n"
 	for _, e := range entries {
 		text += fmt.Sprintf("#%d %s Nv.%d | XP:%d | PVP:%d\n",
@@ -994,7 +994,7 @@ func gmInfo(chatID int64, name string) {
 }
 
 func gmShowRanking(chatID int64) {
-	entries, _ := database.GetRanking(15)
+	entries, _ := rankingSvc.Top(15)
 	text := "🏆 *Top 15 — GM View*\n\n"
 	for _, e := range entries {
 		text += fmt.Sprintf("#%d %s Nv.%d | XP:%d | PVP:%d\n",

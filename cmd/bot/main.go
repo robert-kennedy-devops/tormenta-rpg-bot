@@ -16,7 +16,7 @@ import (
 	botruntime "github.com/tormenta-bot/internal/bot"
 	"github.com/tormenta-bot/internal/database"
 	"github.com/tormenta-bot/internal/handlers"
-	"github.com/tormenta-bot/internal/systems/workers"
+	"github.com/tormenta-bot/internal/worker"
 )
 
 func main() {
@@ -73,7 +73,7 @@ func main() {
 	log.Printf("\u2705 Bot @%s started | Images: %s", bot.Self.UserName, assetsDir)
 
 	// Centralized background workers (pix, cleanup, events, energy clamp)
-	wm := workers.NewManager()
+	wm := worker.NewManager()
 	wm.Start(os.Getenv("ABACATEPAY_TOKEN") != "")
 	log.Println("🧰 Central worker manager started")
 
