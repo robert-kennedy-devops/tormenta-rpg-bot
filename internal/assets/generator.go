@@ -409,6 +409,12 @@ func getAllImageSpecs() []imageSpec {
 			borderColor: c(200, 140, 220),
 			symbol: coinSymbol,
 		},
+		{
+			path: "items/materials.png",
+			bg1: c(45, 45, 35), bg2: c(75, 75, 55), accent: c(215, 200, 140),
+			borderColor: c(190, 175, 120),
+			symbol: genericRockSymbol,
+		},
 	}
 }
 
