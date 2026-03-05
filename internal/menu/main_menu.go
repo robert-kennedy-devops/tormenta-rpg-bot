@@ -34,6 +34,10 @@ func MainMenu(opts MainMenuOptions) tgbotapi.InlineKeyboardMarkup {
 			Btn("💰 Vender", "menu_sell"),
 		),
 		Row(
+			Btn("🔨 Forja", "menu_forge"),
+			Btn("🧰 Crafting", "menu_crafting"),
+		),
+		Row(
 			Btn("💎 Diamantes", "menu_diamonds"),
 		),
 		Row(

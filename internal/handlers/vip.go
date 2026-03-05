@@ -10,6 +10,7 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/tormenta-bot/internal/database"
+	"github.com/tormenta-bot/internal/drops"
 	"github.com/tormenta-bot/internal/game"
 	menukit "github.com/tormenta-bot/internal/menu"
 	"github.com/tormenta-bot/internal/models"
@@ -905,6 +906,7 @@ func doAutoHuntCombat(charID int, session *database.AutoHuntSession) bool {
 		game.ApplyLevelUp(char, lvlUp)
 		char.EnergyMax = game.MaxEnergyVIP(char.Level)
 	}
+	_ = applyMaterialDrops(char, &monster, drops.ModeAutoHunt)
 
 	database.SaveCharacter(char)
 	database.UpdateAutoHuntTick(session.ID, xpGain, goldGain)

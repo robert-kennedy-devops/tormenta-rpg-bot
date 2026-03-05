@@ -10,9 +10,17 @@ Use os textos abaixo no campo **About** do GitHub.
 
 Bot de RPG multiplayer para Telegram em Go, com combate por turnos, masmorras, PvP, árvore de habilidades, economia, VIP com auto-caça e pagamentos Pix.
 
+Versão atualizada (com progressão avançada):
+
+Bot de RPG multiplayer para Telegram em Go, com combate por turnos, masmorras, PvP, forja de equipamentos (+1 a +10), crafting, loot tables modulares, VIP com auto-caça e pagamentos Pix.
+
 ## About (descrição estendida)
 
 Tormenta RPG Bot é um backend de jogo para Telegram, desenvolvido em Go, com foco em progressão de personagem, combate tático e operação em produção com Docker + PostgreSQL. O projeto inclui sistema de inventário/equipamentos, skills por classe, masmorras, ranking PvP, economia com moedas in-game, VIP com auto-caça e integração de pagamentos via Pix.
+
+Versão atualizada (com novos sistemas):
+
+Tormenta RPG Bot é um backend de RPG para Telegram em Go, com arquitetura modular e foco em escalabilidade. Além de PvE/PvP, inventário e economia, o projeto agora inclui progressão avançada de itens com separação de template/instância (`player_items`), sistema de forja com risco de quebra, crafting baseado em materiais, loot tables por contexto (normal/dungeon/explore/auto_hunt) e base de eventos aleatórios de exploração.
 
 ## Topics recomendados
 

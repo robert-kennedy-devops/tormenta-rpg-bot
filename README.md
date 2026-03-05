@@ -69,7 +69,7 @@ ASSETS_DIR=./assets/images           # Diretório de imagens geradas
 
 ## Banco de dados
 
-O projeto usa **migrações incrementais** em `migrations/001_init.sql` até `migrations/014_shield_offhand_slot.sql`.
+O projeto usa **migrações incrementais** em `migrations/001_init.sql` até `migrations/015_player_items.sql`.
 
 Para subir do zero (manual), aplique os `.sql` em ordem:
 
@@ -83,9 +83,20 @@ Com Docker, o PostgreSQL executa automaticamente todos os arquivos `.sql` de `./
 Evoluções recentes de schema:
 - `013_backfill_equipped_slots.sql`: normalização/backfill de slots equipados.
 - `014_shield_offhand_slot.sql`: cria e ajusta o slot dedicado `offhand` (escudo).
+- `015_player_items.sql`: adiciona instâncias de item por personagem para progressão de forja (`upgrade_level`, quebra e equip por instância).
 
 ## Atualizações recentes
 
+- Progressão avançada (Fase 2):
+  - Novo domínio de itens em `internal/items` com separação entre **template** e **instância de jogador**.
+  - Sistema de **forja** em `internal/forge` com upgrade de `+1` até `+10`, chance configurável e risco de quebra a partir de `+5`.
+  - Sistema de **crafting** em `internal/crafting` com receitas e consumo de materiais.
+  - Sistema de **drops modulares** em `internal/drops` e serviço em `internal/services/drop_service.go`.
+  - Eventos de **exploração aleatória** em `internal/explore`.
+  - Integração inicial no jogo:
+    - Menus `🔨 Forja` e `🧰 Crafting` no menu principal.
+    - Drops de materiais ativos em combate normal, dungeon e auto-caça.
+    - Auto-caça com chance reduzida por multiplicador (`5%` base -> `1.5%` efetivo).
 - Arquitetura e escalabilidade:
   - Novo processamento concorrente de updates em `internal/bot/update_worker.go`.
   - Rate limiting de chamadas Telegram em `internal/bot/rate_limiter.go`.
@@ -121,6 +132,7 @@ Evoluções recentes de schema:
 | `combat_log` | Histórico de combates |
 | `daily_bonus` | Controle de bônus diário |
 | `image_cache` | Cache de `file_id` do Telegram |
+| `player_items` | Instâncias de itens equipáveis por personagem (forja/progressão) |
 
 ---
 
@@ -139,14 +151,16 @@ tormenta-bot/
 │   │   └── manager.go          # Cache de imagens no Telegram
 │   ├── database/
 │   │   ├── database.go         # Conexão e queries SQL
-│   │   └── image_cache.go      # Implementação de cache de file_id no banco
+│   │   ├── image_cache.go      # Implementação de cache de file_id no banco
+│   │   └── player_items.go     # Persistência de instâncias de itens (forja)
 │   ├── game/
 │   │   ├── combat.go           # Engine de combate por turnos
 │   │   ├── data.go             # Raças, classes, monstros, mapas, itens, drops
 │   │   ├── dungeon_logic.go    # Lógica de masmorras
 │   │   ├── energy.go           # Sistema de energia e regeneração
 │   │   ├── game_pix.go         # Integração AbacatePay
-│   │   └── pvp_game.go         # Lógica de PvP
+│   │   ├── pvp_game.go         # Lógica de PvP
+│   │   └── extended_items.go   # Itens estendidos (materiais/crafting)
 │   ├── handlers/
 │   │   ├── handlers.go         # Handler principal: mensagens e callbacks
 │   │   ├── dungeon_handler.go  # Handlers de dungeon
@@ -156,7 +170,21 @@ tormenta-bot/
 │   │   ├── pix_handler.go      # Compra, polling e webhook de Pix
 │   │   ├── pvp_handler.go      # Handlers de PvP
 │   │   ├── rank.go             # Ranking global
-│   │   └── vip.go              # VIP: painel, compra, caça automática
+│   │   ├── vip.go              # VIP: painel, compra, caça automática
+│   │   ├── drop_materials.go   # Aplicação de drops de materiais por modo
+│   │   └── progression.go      # Menus e fluxo de Forja/Crafting
+│   ├── items/
+│   │   ├── types.go            # ItemTemplate, PlayerItem e stat blocks
+│   │   └── materials.go        # Catálogo de materiais de forja/crafting
+│   ├── forge/
+│   │   └── forge.go            # Regras de sucesso/falha/quebra da forja
+│   ├── drops/
+│   │   ├── loot.go             # Loot tables por modo (normal/dungeon/auto)
+│   │   └── default_tables.go   # Tabelas padrão de materiais
+│   ├── crafting/
+│   │   └── crafting.go         # Receitas e consumo de materiais
+│   ├── explore/
+│   │   └── events.go           # Eventos aleatórios de exploração
 │   ├── menu/
 │   │   ├── engine.go           # Helpers de botões/linhas/teclados inline
 │   │   ├── main_menu.go        # Menu principal
@@ -169,14 +197,16 @@ tormenta-bot/
 │   ├── services/
 │   │   ├── player_service.go   # Regras de jogador
 │   │   ├── shop_service.go     # Regras de loja/compra
-│   │   └── combat_service.go   # Regras de combate
+│   │   ├── combat_service.go   # Regras de combate
+│   │   └── drop_service.go     # Serviço de drop por contexto de jogo
 │   └── models/
 │       └── models.go           # Structs: Character, Player, Item, Monster...
 ├── migrations/
 │   ├── 001_init.sql
 │   ├── ...
 │   ├── 013_backfill_equipped_slots.sql
-│   └── 014_shield_offhand_slot.sql
+│   ├── 014_shield_offhand_slot.sql
+│   └── 015_player_items.sql
 ├── scripts/
 │   ├── update.ps1              # Atualização com backup (Windows)
 │   └── update.sh               # Atualização com backup (Linux/macOS)
@@ -282,6 +312,59 @@ Duelos 1v1 com aposta de ouro. O desafiado tem 5 minutos para aceitar. Combate a
 
 **Diamantes 💎** — moeda premium. Obtida via bônus diário, drops raros ou compra por Pix. Usada para VIP e loja premium.
 
+**Materiais de Progressão 🧱** — usados em forja e crafting:
+- Pedra de Forja
+- Pedra Refinada
+- Essência Arcana
+- Fragmento de Monstro
+- Metal Negro
+
+---
+
+### Forja
+
+Equipamentos podem ser aprimorados de `+1` até `+10`.
+
+| Nível alvo | Chance |
+|---|---|
+| +1 | 100% |
+| +2 | 90% |
+| +3 | 80% |
+| +4 | 70% |
+| +5 | 60% |
+| +6 | 50% |
+| +7 | 40% |
+| +8 | 30% |
+| +9 | 20% |
+| +10 | 10% |
+
+Regras de falha:
+- Até `+4`: falha segura (não quebra).
+- De `+5` em diante: falha pode quebrar item.
+
+---
+
+### Crafting
+
+Sistema de receitas com consumo de materiais.
+
+Exemplo:
+- **Espada Negra**
+  - `3x Metal Negro`
+  - `1x Essência Arcana`
+
+---
+
+### Drops e exploração
+
+- Drops usam loot tables por contexto (`normal`, `dungeon`, `explore`, `auto_hunt`).
+- Auto-caça aplica multiplicador reduzido para manter balanceamento de economia.
+- Base para exploração aleatória pronta com eventos:
+  - monstro
+  - tesouro
+  - evento raro
+  - nada
+
 ---
 
 ### Sistema VIP
@@ -297,7 +380,7 @@ Duelos 1v1 com aposta de ouro. O desafiado tem 5 minutos para aceitar. Combate a
 - Regeneração 2× mais rápida
 - 🤖 Caça automática (offline hunting)
 
-**Caça automática:** o jogador seleciona uma zona e inicia a sessão. Um worker em background executa ticks a cada 5 minutos — consome 1⚡, sorteia monstro, simula combate e credita recompensas. Notifica via Telegram em eventos especiais (level up, drop de diamante, morte, energia zerada). Para automaticamente se energia zerar, personagem morrer ou VIP expirar.
+**Caça automática:** o jogador seleciona uma zona e inicia a sessão. Um worker em background executa ticks a cada 5 minutos — consome 1⚡, sorteia monstro, simula combate e credita recompensas. O relatório mostra status consolidado (kills, XP, ouro, nível e diamantes) sem spam de notificação por tick. Para automaticamente se energia zerar, personagem morrer ou VIP expirar.
 
 ---
 

@@ -79,6 +79,22 @@ func Migrate() {
 		`UPDATE inventory
 		  SET slot='offhand'
 		  WHERE equipped=true AND (item_id='iron_shield' OR item_id LIKE 'shield_%')`,
+		`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`,
+		`CREATE TABLE IF NOT EXISTS player_items (
+			instance_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			character_id INT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+			template_id VARCHAR(64) NOT NULL,
+			upgrade_level INT NOT NULL DEFAULT 0,
+			broken BOOLEAN NOT NULL DEFAULT FALSE,
+			equipped BOOLEAN NOT NULL DEFAULT FALSE,
+			equipped_slot VARCHAR(20) DEFAULT NULL,
+			rarity_override VARCHAR(20) DEFAULT NULL,
+			stat_overrides JSONB DEFAULT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_player_items_character ON player_items(character_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_player_items_template ON player_items(character_id, template_id)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := DB.Exec(stmt); err != nil {
@@ -496,6 +512,15 @@ func ResetSkills(charID int) (skillIDs []string, err error) {
 // INVENTORY
 // =============================================
 
+func isEquipableItemType(itemType string) bool {
+	switch itemType {
+	case "weapon", "armor", "accessory":
+		return true
+	default:
+		return false
+	}
+}
+
 func GetInventory(charID int) ([]models.InventoryItem, error) {
 	rows, err := DB.Query(`
 		SELECT id, character_id, item_id, item_type, quantity, equipped, COALESCE(slot,'')
@@ -525,7 +550,15 @@ func AddItem(charID int, itemID, itemType string, qty int) error {
 		VALUES ($1,$2,$3,$4)
 		ON CONFLICT (character_id, item_id) DO UPDATE SET quantity = inventory.quantity + $4
 	`, charID, itemID, itemType, qty)
-	return err
+	if err != nil {
+		return err
+	}
+	if isEquipableItemType(itemType) {
+		if err := CreatePlayerItemInstances(charID, itemID, qty); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func RemoveItem(charID int, itemID string, qty int) error {
@@ -539,10 +572,32 @@ func RemoveItem(charID int, itemID string, qty int) error {
 	}
 	if current <= qty {
 		_, err := DB.Exec(`DELETE FROM inventory WHERE character_id=$1 AND item_id=$2`, charID, itemID)
-		return err
+		if err != nil {
+			return err
+		}
+		for i := 0; i < current; i++ {
+			ok, _ := DeleteOnePlayerItemInstance(charID, itemID, true)
+			if !ok {
+				_, _ = DeleteOnePlayerItemInstance(charID, itemID, false)
+			}
+		}
+		return nil
 	}
 	_, err := DB.Exec(`UPDATE inventory SET quantity=quantity-$3 WHERE character_id=$1 AND item_id=$2`, charID, itemID, qty)
-	return err
+	if err != nil {
+		return err
+	}
+	for i := 0; i < qty; i++ {
+		ok, delErr := DeleteOnePlayerItemInstance(charID, itemID, true)
+		if delErr != nil {
+			return delErr
+		}
+		if !ok {
+			_, _ = DeleteOnePlayerItemInstance(charID, itemID, false)
+		}
+	}
+	_ = SyncInventoryEquippedFromInstances(charID, itemID)
+	return nil
 }
 
 func GetItemCount(charID int, itemID string) int {
@@ -564,11 +619,13 @@ func EquipItemSlot(charID int, itemID string, itemType string, slot string) erro
 		if _, err := DB.Exec(`UPDATE inventory SET equipped=false, slot=NULL WHERE character_id=$1 AND slot=$2`, charID, slot); err != nil {
 			return err
 		}
+		_ = UnequipPlayerItemsBySlot(charID, slot)
 	} else {
 		// Legacy: unequip by type (for weapon only fallback)
 		if _, err := DB.Exec(`UPDATE inventory SET equipped=false WHERE character_id=$1 AND item_type=$2`, charID, itemType); err != nil {
 			return err
 		}
+		_ = UnequipPlayerItemsByTemplate(charID, itemID)
 	}
 	var err error
 	if slot != "" {
@@ -576,18 +633,32 @@ func EquipItemSlot(charID int, itemID string, itemType string, slot string) erro
 	} else {
 		_, err = DB.Exec(`UPDATE inventory SET equipped=true WHERE character_id=$1 AND item_id=$2`, charID, itemID)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if isEquipableItemType(itemType) {
+		if eErr := EquipPlayerItemByTemplateAndSlot(charID, itemID, slot); eErr != nil {
+			return eErr
+		}
+	}
+	return nil
 }
 
 // UnequipSlot removes the equipped item from a specific slot.
 func UnequipSlot(charID int, slot string) error {
 	_, err := DB.Exec(`UPDATE inventory SET equipped=false, slot=NULL WHERE character_id=$1 AND slot=$2`, charID, slot)
-	return err
+	if err != nil {
+		return err
+	}
+	return UnequipPlayerItemsBySlot(charID, slot)
 }
 
 func UnequipItem(charID int, itemID string) error {
 	_, err := DB.Exec(`UPDATE inventory SET equipped=false WHERE character_id=$1 AND item_id=$2`, charID, itemID)
-	return err
+	if err != nil {
+		return err
+	}
+	return UnequipPlayerItemsByTemplate(charID, itemID)
 }
 
 func GetEquippedItems(charID int) ([]models.InventoryItem, error) {

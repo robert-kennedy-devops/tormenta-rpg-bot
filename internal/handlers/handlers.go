@@ -13,6 +13,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/tormenta-bot/internal/assets"
 	"github.com/tormenta-bot/internal/database"
+	"github.com/tormenta-bot/internal/drops"
 	"github.com/tormenta-bot/internal/game"
 	menukit "github.com/tormenta-bot/internal/menu"
 	"github.com/tormenta-bot/internal/models"
@@ -106,6 +107,13 @@ func screenFromCallback(data string) string {
 		data == "menu_pvp",
 		data == "menu_rank":
 		return data
+	case data == "menu_forge", data == "menu_crafting",
+		strings.HasPrefix(data, "forge_"),
+		strings.HasPrefix(data, "craft_"):
+		if strings.HasPrefix(data, "forge_") || data == "menu_forge" {
+			return "menu_forge"
+		}
+		return "menu_crafting"
 	case strings.HasPrefix(data, "inv_tab_"),
 		strings.HasPrefix(data, "inv_item_"),
 		strings.HasPrefix(data, "inv_back_"),
@@ -262,6 +270,10 @@ func HandleCallback(cb *tgbotapi.CallbackQuery) {
 		showSkillsHome(chatID, msgID, userID)
 	case data == "menu_shop":
 		showShopHome(chatID, msgID, userID)
+	case data == "menu_forge":
+		showForgeMenu(chatID, msgID, userID)
+	case data == "menu_crafting":
+		showCraftingMenu(chatID, msgID, userID)
 	case data == "menu_travel":
 		showTravelMenu(chatID, msgID, userID)
 	case data == "menu_explore":
@@ -348,6 +360,14 @@ func HandleCallback(cb *tgbotapi.CallbackQuery) {
 		showShopMenu(chatID, msgID, userID)
 	case strings.HasPrefix(data, "shop_qty_"):
 		handleShopQty(chatID, msgID, userID, strings.TrimPrefix(data, "shop_qty_"))
+	case strings.HasPrefix(data, "forge_pick_"):
+		showForgeItem(chatID, msgID, userID, strings.TrimPrefix(data, "forge_pick_"))
+	case strings.HasPrefix(data, "forge_try_"):
+		handleForgeTry(chatID, msgID, userID, strings.TrimPrefix(data, "forge_try_"))
+	case strings.HasPrefix(data, "craft_preview_"):
+		showCraftRecipe(chatID, msgID, userID, strings.TrimPrefix(data, "craft_preview_"))
+	case strings.HasPrefix(data, "craft_make_"):
+		handleCraftMake(chatID, msgID, userID, strings.TrimPrefix(data, "craft_make_"))
 
 	// ── SELL ────────────────────────────────────────────
 	case data == "menu_sell":
@@ -2724,9 +2744,9 @@ func handleMonsterDeath(chatID int64, msgID int, char *models.Character, monster
 	}
 
 	// ── Item drop system ────────────────────────────────────
-	drops := game.RollDrops(monster, char.Level)
+	lootDrops := game.RollDrops(monster, char.Level)
 	var dropLines []string
-	for _, drop := range drops {
+	for _, drop := range lootDrops {
 		item, ok := game.Items[drop.ItemID]
 		if !ok {
 			continue
@@ -2753,6 +2773,7 @@ func handleMonsterDeath(chatID int64, msgID int, char *models.Character, monster
 			dropLines = append(dropLines, fmt.Sprintf("🎁 %s%s *%s* (%s)", qtyStr, item.Emoji, item.Name, item.Rarity.Name()))
 		}
 	}
+	dropLines = append(dropLines, applyMaterialDrops(char, monster, drops.ModeNormal)...)
 	// ────────────────────────────────────────────────────────
 
 	lvlUp := game.CheckLevelUp(char)
@@ -4196,6 +4217,8 @@ func backKb(dest string) tgbotapi.InlineKeyboardMarkup {
 		"menu_vip":       "⬅️ Voltar ao VIP",
 		"menu_pvp":       "⬅️ Voltar ao PVP",
 		"menu_rank":      "⬅️ Voltar ao Ranking",
+		"menu_forge":     "⬅️ Voltar a Forja",
+		"menu_crafting":  "⬅️ Voltar ao Crafting",
 		"diamond_shop":   "⬅️ Voltar a Loja de Diamantes",
 	}
 	label, ok := labels[dest]

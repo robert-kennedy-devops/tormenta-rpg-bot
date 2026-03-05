@@ -7,6 +7,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/tormenta-bot/internal/assets"
 	"github.com/tormenta-bot/internal/database"
+	"github.com/tormenta-bot/internal/drops"
 	"github.com/tormenta-bot/internal/game"
 	menukit "github.com/tormenta-bot/internal/menu"
 	"github.com/tormenta-bot/internal/models"
@@ -393,9 +394,9 @@ func handleDungeonMonsterDeath(chatID int64, msgID int, char *models.Character, 
 	}
 
 	// Item drops
-	drops := game.RollDrops(monster, char.Level)
+	lootDrops := game.RollDrops(monster, char.Level)
 	var dropLines []string
-	for _, drop := range drops {
+	for _, drop := range lootDrops {
 		item, ok := game.Items[drop.ItemID]
 		if !ok {
 			continue
@@ -422,6 +423,7 @@ func handleDungeonMonsterDeath(chatID int64, msgID int, char *models.Character, 
 			dropLines = append(dropLines, fmt.Sprintf("🎁 %s%s *%s* (%s)", item.Emoji, qtyStr, item.Name, item.Rarity.Name()))
 		}
 	}
+	dropLines = append(dropLines, applyMaterialDrops(char, monster, drops.ModeDungeon)...)
 
 	// Level up
 	lvlUp := game.CheckLevelUp(char)
