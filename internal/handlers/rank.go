@@ -3,8 +3,8 @@ package handlers
 import (
 	"fmt"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/tormenta-bot/internal/database"
+	menukit "github.com/tormenta-bot/internal/menu"
 )
 
 func showRankMenu(chatID int64, msgID int, userID int64) {
@@ -13,14 +13,7 @@ func showRankMenu(chatID int64, msgID int, userID int64) {
 		return
 	}
 	caption := "🏆 *Ranking*\n\n_Escolha uma opção:_"
-	kb := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("👤 Minhas Estatísticas", "rank_personal"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🏰 Menu", "menu_main"),
-		),
-	)
+	kb := menukit.RankMenu()
 	editPhoto(chatID, msgID, "menu", caption, &kb)
 }
 

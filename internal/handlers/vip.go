@@ -11,6 +11,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/tormenta-bot/internal/database"
 	"github.com/tormenta-bot/internal/game"
+	menukit "github.com/tormenta-bot/internal/menu"
 	"github.com/tormenta-bot/internal/models"
 )
 
@@ -135,17 +136,13 @@ func showVIPPanel(chatID int64, msgID int, userID int64) {
 		vipStatus, vipMax, normalMax, huntStatus, huntDetails,
 	)
 
-	var rows [][]tgbotapi.InlineKeyboardButton
+	var huntRows [][]tgbotapi.InlineKeyboardButton
 	if isVIP {
 		if session != nil && session.Status == "running" {
-			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("📊 Ver Relatório", "vip_hunt_report"),
-				tgbotapi.NewInlineKeyboardButtonData("⏹️ Parar Caça", "vip_hunt_stop"),
-			))
 		} else {
 			maps := game.GetAvailableMapsForHunt(char.Level)
 			for _, m := range maps {
-				rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+				huntRows = append(huntRows, tgbotapi.NewInlineKeyboardRow(
 					tgbotapi.NewInlineKeyboardButtonData(
 						fmt.Sprintf("🏹 Caçar em %s %s", m.Emoji, m.Name),
 						"vh_cfg_"+mc(m.ID),
@@ -155,14 +152,12 @@ func showVIPPanel(chatID int64, msgID int, userID int64) {
 		}
 	} else {
 		caption += "\n\n_Obtenha VIP para desbloquear esses benefícios!_"
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("💎 Comprar VIP", "vip_buy"),
-		))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("🏰 Menu", "menu_main"),
-	))
-	kb := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
+	kb := menukit.VIPPanel(menukit.VIPPanelOptions{
+		IsVIP:      isVIP,
+		HasSession: session != nil && session.Status == "running",
+		HuntRows:   huntRows,
+	})
 	editPhoto(chatID, msgID, "menu", caption, &kb)
 }
 

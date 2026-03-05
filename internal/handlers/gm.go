@@ -12,6 +12,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/tormenta-bot/internal/database"
 	"github.com/tormenta-bot/internal/game"
+	menukit "github.com/tormenta-bot/internal/menu"
 )
 
 // =============================================
@@ -364,16 +365,7 @@ func showGMDashboard(chatID int64) {
 			"Use os botões abaixo ou `/gm buscar <nome>` para gerenciar jogadores.",
 		total, total-banned, banned,
 	)
-	kb := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("👥 Jogadores", "gm_players"),
-			tgbotapi.NewInlineKeyboardButtonData("🚫 Banidos", "gm_banned"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🏆 Ranking", "gm_rank"),
-			tgbotapi.NewInlineKeyboardButtonData("🔄 Atualizar", "gm_menu"),
-		),
-	)
+	kb := menukit.GMDashboard()
 	sendMsg(chatID, text, &kb)
 }
 
@@ -431,19 +423,7 @@ func buildCharPanelKB(char *database.CharFull) *tgbotapi.InlineKeyboardMarkup {
 	if char.Banned {
 		banLabel, banAction = "✅ Desbanir", fmt.Sprintf("gm_unban_%d", char.ID)
 	}
-	kb := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("💎 Diamantes", fmt.Sprintf("gm_dpanel_%d", char.ID)),
-			tgbotapi.NewInlineKeyboardButtonData("🪙 Ouro", fmt.Sprintf("gm_gpanel_%d", char.ID)),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(banLabel, banAction),
-			tgbotapi.NewInlineKeyboardButtonData("📋 Info completo", fmt.Sprintf("gm_panel_%d", char.ID)),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🔙 Painel GM", "gm_menu"),
-		),
-	)
+	kb := menukit.GMPlayerPanel(char.ID, banLabel, banAction)
 	return &kb
 }
 
@@ -542,10 +522,10 @@ func gmExecuteBan(chatID int64, msgID int, gmID int64, charID int, reason string
 		char.Name, char.PlayerID, char.ID, reason,
 	)
 	editMsg(chatID, msgID, result,
-		&tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{
-			{tgbotapi.NewInlineKeyboardButtonData("📋 Ver jogador", fmt.Sprintf("gm_panel_%d", charID))},
-			{tgbotapi.NewInlineKeyboardButtonData("🔙 Painel GM", "gm_menu")},
-		}},
+		func() *tgbotapi.InlineKeyboardMarkup {
+			kb := menukit.GMPlayerResult(charID)
+			return &kb
+		}(),
 	)
 
 	gmLog(gmID, fmt.Sprintf("BAN char=%d tg=%d name=%s reason=%s", charID, char.PlayerID, char.Name, reason))
@@ -583,10 +563,10 @@ func gmExecuteUnban(chatID int64, msgID int, gmID int64, charID int) {
 		char.Name, char.PlayerID, char.ID,
 	)
 	editMsg(chatID, msgID, result,
-		&tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{
-			{tgbotapi.NewInlineKeyboardButtonData("📋 Ver jogador", fmt.Sprintf("gm_panel_%d", charID))},
-			{tgbotapi.NewInlineKeyboardButtonData("🔙 Painel GM", "gm_menu")},
-		}},
+		func() *tgbotapi.InlineKeyboardMarkup {
+			kb := menukit.GMPlayerResult(charID)
+			return &kb
+		}(),
 	)
 	gmLog(gmID, fmt.Sprintf("UNBAN char=%d tg=%d name=%s", charID, char.PlayerID, char.Name))
 	notifyPlayer(char.PlayerID, "✅ *Sua conta foi reativada!*\n\nBoas aventuras em Tormenta RPG! 🗡️")
@@ -606,30 +586,7 @@ func gmShowDiamondPanel(chatID int64, msgID int, charID int) {
 			"Selecione o ajuste:",
 		char.Name, char.Diamonds,
 	)
-	kb := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("+1", fmt.Sprintf("gm_dplus_%d_1", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("+5", fmt.Sprintf("gm_dplus_%d_5", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("+10", fmt.Sprintf("gm_dplus_%d_10", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("+50", fmt.Sprintf("gm_dplus_%d_50", charID)),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("+100", fmt.Sprintf("gm_dplus_%d_100", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("+200", fmt.Sprintf("gm_dplus_%d_200", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("+500", fmt.Sprintf("gm_dplus_%d_500", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("+1000", fmt.Sprintf("gm_dplus_%d_1000", charID)),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("-1", fmt.Sprintf("gm_dminus_%d_1", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("-5", fmt.Sprintf("gm_dminus_%d_5", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("-10", fmt.Sprintf("gm_dminus_%d_10", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("-50", fmt.Sprintf("gm_dminus_%d_50", charID)),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("❌ Zerar tudo", fmt.Sprintf("gm_dminus_%d_99999", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("🔙 Voltar", fmt.Sprintf("gm_panel_%d", charID)),
-		),
-	)
+	kb := menukit.GMDiamondPanel(charID)
 	editMsg(chatID, msgID, text, &kb)
 }
 
@@ -666,30 +623,7 @@ func gmDoAdjustDiamond(chatID int64, msgID int, gmID int64, charID int, delta in
 			"Selecione o ajuste:",
 		char.Name, newVal, sign, delta, char.Diamonds,
 	)
-	kb := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("+1", fmt.Sprintf("gm_dplus_%d_1", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("+5", fmt.Sprintf("gm_dplus_%d_5", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("+10", fmt.Sprintf("gm_dplus_%d_10", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("+50", fmt.Sprintf("gm_dplus_%d_50", charID)),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("+100", fmt.Sprintf("gm_dplus_%d_100", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("+200", fmt.Sprintf("gm_dplus_%d_200", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("+500", fmt.Sprintf("gm_dplus_%d_500", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("+1000", fmt.Sprintf("gm_dplus_%d_1000", charID)),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("-1", fmt.Sprintf("gm_dminus_%d_1", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("-5", fmt.Sprintf("gm_dminus_%d_5", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("-10", fmt.Sprintf("gm_dminus_%d_10", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("-50", fmt.Sprintf("gm_dminus_%d_50", charID)),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("❌ Zerar tudo", fmt.Sprintf("gm_dminus_%d_99999", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("🔙 Voltar", fmt.Sprintf("gm_panel_%d", charID)),
-		),
-	)
+	kb := menukit.GMDiamondPanel(charID)
 	editMsg(chatID, msgID, text, &kb)
 
 	// Notify the player silently
@@ -717,24 +651,7 @@ func gmShowGoldPanel(chatID int64, msgID int, charID int) {
 }
 
 func buildGoldPanelKB(charID int) tgbotapi.InlineKeyboardMarkup {
-	return tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("+100", fmt.Sprintf("gm_gplus_%d_100", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("+500", fmt.Sprintf("gm_gplus_%d_500", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("+1000", fmt.Sprintf("gm_gplus_%d_1000", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("+5000", fmt.Sprintf("gm_gplus_%d_5000", charID)),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("-100", fmt.Sprintf("gm_gminus_%d_100", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("-500", fmt.Sprintf("gm_gminus_%d_500", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("-1000", fmt.Sprintf("gm_gminus_%d_1000", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("-5000", fmt.Sprintf("gm_gminus_%d_5000", charID)),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("❌ Zerar", fmt.Sprintf("gm_gminus_%d_9999999", charID)),
-			tgbotapi.NewInlineKeyboardButtonData("🔙 Voltar", fmt.Sprintf("gm_panel_%d", charID)),
-		),
-	)
+	return menukit.GMGoldPanel(charID)
 }
 
 func gmDoAdjustGold(chatID int64, msgID int, gmID int64, charID int, delta int) {
@@ -786,9 +703,7 @@ func gmListPlayersInline(chatID int64, msgID int) {
 		text += fmt.Sprintf("%s `%d` @%s\n", status, p.ID, escMd(uname))
 	}
 	editMsg(chatID, msgID, text, &tgbotapi.InlineKeyboardMarkup{
-		InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{
-			{tgbotapi.NewInlineKeyboardButtonData("🔙 Painel GM", "gm_menu")},
-		},
+		InlineKeyboard: menukit.GMBackToDashboard().InlineKeyboard,
 	})
 }
 
@@ -813,9 +728,7 @@ func gmShowBannedInline(chatID int64, msgID int) {
 	} else {
 		text += fmt.Sprintf("\nTotal: *%d*", count)
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("🔙 Painel GM", "gm_menu"),
-	))
+	rows = append(rows, menukit.GMBackToDashboard().InlineKeyboard...)
 	kb := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
 	editMsg(chatID, msgID, text, &kb)
 }
@@ -828,12 +741,9 @@ func gmShowRankingInline(chatID int64, msgID int) {
 			e.Position, escMd(e.Name), e.Level, e.Score, e.PVPRating)
 	}
 	editMsg(chatID, msgID, text, &tgbotapi.InlineKeyboardMarkup{
-		InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{
-			{tgbotapi.NewInlineKeyboardButtonData("🔙 Painel GM", "gm_menu")},
-		},
+		InlineKeyboard: menukit.GMBackToDashboard().InlineKeyboard,
 	})
 }
-
 
 // ── PIX payments panel ────────────────────────────────────
 
@@ -872,12 +782,10 @@ func gmShowPixInline(chatID int64, msgID int) {
 		}
 	}
 
-	editMsg(chatID, msgID, text, &tgbotapi.InlineKeyboardMarkup{
-		InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{
-			{tgbotapi.NewInlineKeyboardButtonData("🔄 Atualizar", "gm_pix")},
-			{tgbotapi.NewInlineKeyboardButtonData("🔙 Painel GM", "gm_menu")},
-		},
-	})
+	editMsg(chatID, msgID, text, func() *tgbotapi.InlineKeyboardMarkup {
+		kb := menukit.GMPixInline()
+		return &kb
+	}())
 }
 
 func gmShowPixPayments(chatID int64) {
@@ -1150,12 +1058,7 @@ func parseNameReason(args []string) (name, reason string) {
 }
 
 func buildConfirmKB(yesAction, yesLabel, noAction, noLabel string) *tgbotapi.InlineKeyboardMarkup {
-	kb := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(yesLabel, yesAction),
-			tgbotapi.NewInlineKeyboardButtonData(noLabel, noAction),
-		),
-	)
+	kb := menukit.GMConfirm(yesAction, yesLabel, noAction, noLabel)
 	return &kb
 }
 

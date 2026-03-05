@@ -10,6 +10,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/tormenta-bot/internal/database"
 	"github.com/tormenta-bot/internal/game"
+	menukit "github.com/tormenta-bot/internal/menu"
 )
 
 // =============================================
@@ -50,24 +51,7 @@ func showPixShop(chatID int64, msgID int, userID int64) {
 	}
 	caption += "_Diamantes liberados em segundos ap\u00f3s confirma\u00e7\u00e3o do Pix._"
 
-	var rows [][]tgbotapi.InlineKeyboardButton
-	for _, pkg := range game.DiamondPackages {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(
-				fmt.Sprintf("%s %s \u2014 %d\U0001f48e por %s", pkg.Emoji, pkg.Name, pkg.Amount+pkg.Bonus, pkg.Price),
-				"pix_buy_"+pkg.ID,
-			),
-		))
-	}
-	if len(pending) > 0 {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("\U0001f504 Verificar Pagamento", "pix_check"),
-		))
-	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("\U0001f4e6 Voltar", "menu_diamonds"),
-	))
-	kb := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
+	kb := menukit.PixShop(game.DiamondPackages, len(pending) > 0)
 	editPhoto(chatID, msgID, "shop", caption, &kb)
 }
 
@@ -115,17 +99,9 @@ func handlePixBuy(chatID int64, msgID int, userID int64, packageID string) {
 	}
 	expireStr := result.ExpiresAt.In(time.FixedZone("BRT", -3*3600)).Format("15:04")
 
-	kb := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("\U0001f504 Verificar Pagamento", "pix_check"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("\U0001f4b3 Outro Pacote", "menu_pix"),
-			tgbotapi.NewInlineKeyboardButtonData("\U0001f3f0 Menu", "menu_main"),
-		),
-	)
+	kb := menukit.PixBuyActions()
 
-	// Try to send QR code as image (best UX) 
+	// Try to send QR code as image (best UX)
 	if result.QRCodeB64 != "" {
 		if imgData, err2 := base64.StdEncoding.DecodeString(result.QRCodeB64); err2 == nil {
 			caption := fmt.Sprintf(
@@ -201,10 +177,7 @@ func handlePixCheck(chatID int64, msgID int, userID int64) {
 	if len(pending) == 0 {
 		editPhoto(chatID, msgID, "shop",
 			"\u2705 *Nenhum pagamento pendente!*\n\nSeus diamantes foram creditados ou o pagamento expirou.",
-			&tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{
-				{tgbotapi.NewInlineKeyboardButtonData("\U0001f48e Comprar Diamantes", "menu_pix")},
-				{tgbotapi.NewInlineKeyboardButtonData("\U0001f3f0 Menu", "menu_main")},
-			}})
+			menukit.PixNoPendingPtr())
 		return
 	}
 
@@ -234,9 +207,7 @@ func handlePixCheck(chatID int64, msgID int, userID int64) {
 		editPhoto(chatID, msgID, "shop",
 			fmt.Sprintf("\u2705 *Pagamento Confirmado!*\n\n\U0001f48e *+%d diamantes* adicionados!\n\nTotal: *%d* \U0001f48e\n\n_Boas aventuras!_",
 				credited, char.Diamonds),
-			&tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{
-				{tgbotapi.NewInlineKeyboardButtonData("\U0001f3f0 Menu Principal", "menu_main")},
-			}})
+			menukit.PixConfirmedPtr())
 		return
 	}
 
@@ -251,20 +222,12 @@ func handlePixCheck(chatID int64, msgID int, userID int64) {
 	}
 	caption += "_Confirmado automaticamente ap\u00f3s o Pix. Toque em verificar novamente se j\u00e1 pagou._"
 
-	rows := [][]tgbotapi.InlineKeyboardButton{
-		{tgbotapi.NewInlineKeyboardButtonData("\U0001f504 Verificar Novamente", "pix_check")},
-		{tgbotapi.NewInlineKeyboardButtonData("\U0001f4b3 Outro Pacote", "menu_pix"),
-			tgbotapi.NewInlineKeyboardButtonData("\U0001f3f0 Menu", "menu_main")},
+	hasDev := os.Getenv("PIX_MANUAL_CONFIRM") == "true" && len(pending) > 0
+	devMPID := int64(0)
+	if hasDev {
+		devMPID = pending[0].MPPaymentID
 	}
-	// DEV mode: manual confirm button
-	if os.Getenv("PIX_MANUAL_CONFIRM") == "true" && len(pending) > 0 {
-		rows = append([][]tgbotapi.InlineKeyboardButton{
-			{tgbotapi.NewInlineKeyboardButtonData(
-				fmt.Sprintf("\U0001f9ea [DEV] Confirmar ID %d", pending[0].MPPaymentID),
-				fmt.Sprintf("pix_devconfirm_%d", pending[0].MPPaymentID),
-			)},
-		}, rows...)
-	}
+	rows := menukit.PixPendingStatusRows(hasDev, devMPID)
 	kb := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
 	editPhoto(chatID, msgID, "shop", caption, &kb)
 }

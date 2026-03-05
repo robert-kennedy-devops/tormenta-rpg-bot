@@ -14,6 +14,7 @@ import (
 	"github.com/tormenta-bot/internal/assets"
 	"github.com/tormenta-bot/internal/database"
 	"github.com/tormenta-bot/internal/game"
+	menukit "github.com/tormenta-bot/internal/menu"
 	"github.com/tormenta-bot/internal/models"
 )
 
@@ -652,11 +653,7 @@ func handleStart(msg *tgbotapi.Message) {
 	chatID := msg.Chat.ID
 	if char == nil {
 		caption := "🏰 *Bem-vindo ao Mundo de Tormenta!*\n\nVocê chega à fronteira de um mundo repleto de magia, perigo e aventura. Terras vastas, masmorras profundas e dragões ancestrais aguardam os corajosos.\n\n⚔️ *RPG baseado em Tormenta 20!*\n\nCrie seu personagem para começar."
-		kb := tgbotapi.NewInlineKeyboardMarkup(
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("⚔️ Criar Personagem", "create_character"),
-			),
-		)
+		kb := menukit.StartWelcome()
 		sendPhoto(chatID, "welcome", caption, &kb)
 	} else {
 		// Tick energy regen on every entry
@@ -753,50 +750,10 @@ func buildMainMenuContent(char *models.Character) (string, tgbotapi.InlineKeyboa
 		currentMap.Emoji, currentMap.Name,
 	)
 
-	rows := [][]tgbotapi.InlineKeyboardButton{}
-
-	// Atalho contextual: reduz confusão e "vai e vem" durante combate.
-	if char.State == "combat" || char.State == "dungeon_combat" {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⚔️ Voltar ao Combate", "combat_resume"),
-		))
-	}
-
-	rows = append(rows,
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("📊 Status", "menu_status"),
-			tgbotapi.NewInlineKeyboardButtonData("🎒 Inventário", "menu_inventory"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🌟 Habilidades", "menu_skills"),
-			tgbotapi.NewInlineKeyboardButtonData("⚡ Energia", "menu_energy"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⚔️ Explorar", "menu_explore"),
-			tgbotapi.NewInlineKeyboardButtonData("🗺️ Viajar", "menu_travel"),
-		),
-	)
-
-	// Sempre mostra "Vender" no menu principal; o handler valida se há loja no local.
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("🏪 Loja", "menu_shop"),
-		tgbotapi.NewInlineKeyboardButtonData("💰 Vender", "menu_sell"),
-	))
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("💎 Diamantes", "menu_diamonds"),
-	))
-
-	rows = append(rows,
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🏚️ Masmorras", "menu_dungeon"),
-			tgbotapi.NewInlineKeyboardButtonData("⚔️ Arena PVP", "menu_pvp"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🏆 Ranking", "menu_rank"),
-			tgbotapi.NewInlineKeyboardButtonData("👑 VIP & Caça Auto", "menu_vip"),
-		),
-	)
-	return caption, tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
+	kb := menukit.MainMenu(menukit.MainMenuOptions{
+		InCombat: char.State == "combat" || char.State == "dungeon_combat",
+	})
+	return caption, kb
 }
 
 func handleCombatResume(chatID int64, msgID int, userID int64) {
@@ -836,16 +793,7 @@ func startCharacterCreation(chatID int64, msgID int, userID int64) {
 		fmt.Sprintf("%s *Anão* — _%s_\n  ✨ _%s_\n\n", dwarf.Emoji, dwarf.Description, dwarf.Trait) +
 		fmt.Sprintf("%s *Meio-Orc* — _%s_\n  ✨ _%s_", halforc.Emoji, halforc.Description, halforc.Trait)
 
-	kb := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("👤 Humano", "race_human"),
-			tgbotapi.NewInlineKeyboardButtonData("🧝 Elfo", "race_elf"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⛏️ Anão", "race_dwarf"),
-			tgbotapi.NewInlineKeyboardButtonData("👹 Meio-Orc", "race_halforc"),
-		),
-	)
+	kb := menukit.RaceSelect()
 	editPhoto(chatID, msgID, "welcome", caption, &kb)
 }
 
@@ -876,19 +824,7 @@ func handleRaceSelect(chatID int64, msgID int, userID int64, race string) {
 		rogue.Emoji, rogue.Description, fmt.Sprintf("❤️%d HP | 🎯 Papel: %s", rogue.BaseHP, rogue.Role),
 		archer.Emoji, archer.Description, fmt.Sprintf("❤️%d HP | 🎯 Papel: %s", archer.BaseHP, archer.Role),
 	)
-	kb := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⚔️ Guerreiro", "class_warrior"),
-			tgbotapi.NewInlineKeyboardButtonData("🧙 Mago", "class_mage"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🗡️ Ladino", "class_rogue"),
-			tgbotapi.NewInlineKeyboardButtonData("🏹 Arqueiro", "class_archer"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⬅️ Voltar", "create_character"),
-		),
-	)
+	kb := menukit.ClassSelect()
 	editPhoto(chatID, msgID, assets.RaceImageKey(race), caption, &kb)
 }
 
@@ -1058,16 +994,7 @@ func showStatus(chatID int64, msgID int, userID int64) {
 			return ""
 		}(),
 	)
-	kb := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⚡ Energia", "menu_energy"),
-			tgbotapi.NewInlineKeyboardButtonData("💎 Diamantes", "menu_diamonds"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🗑️ Apagar Personagem", "delete_character"),
-			tgbotapi.NewInlineKeyboardButtonData("🏰 Menu", "menu_main"),
-		),
-	)
+	kb := menukit.StatusMenu()
 	editPhoto(chatID, msgID, "status", caption, &kb)
 }
 
@@ -1119,37 +1046,7 @@ func showEnergyMenu(chatID int64, msgID int, userID int64) {
 		bothCost,
 	)
 
-	rows := [][]tgbotapi.InlineKeyboardButton{}
-	if hpMissing > 0 && char.Energy > 0 {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(
-				fmt.Sprintf("❤️ Recuperar HP (%d⚡)", hpCost),
-				"energy_heal_hp",
-			),
-		))
-	}
-	if mpMissing > 0 && char.Energy > 0 {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(
-				fmt.Sprintf("💙 Recuperar MP (%d⚡)", mpCost),
-				"energy_heal_mp",
-			),
-		))
-	}
-	if (hpMissing > 0 || mpMissing > 0) && char.Energy > 0 {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(
-				fmt.Sprintf("💖 Recuperar Tudo (%d⚡)", bothCost),
-				"energy_heal_both",
-			),
-		))
-	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("💎 Recarregar com Diamantes", "diamond_buy_energy_full"),
-	))
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("🏰 Menu", "menu_main"),
-	))
+	rows := menukit.EnergyMenuRows(hpMissing, mpMissing, hpCost, mpCost, bothCost, char.Energy > 0)
 	kb := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
 	editPhoto(chatID, msgID, "rest", caption, &kb)
 }
@@ -1232,20 +1129,7 @@ func showDiamondMenu(chatID int64, msgID int, userID int64) {
 			"• 💰 Comprar pacotes abaixo",
 		char.Diamonds,
 	)
-	kb := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🎁 Bônus Diário", "daily_bonus"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🛒 Loja de Diamantes", "diamond_shop"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("💳 Comprar via Pix", "menu_pix"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🏰 Menu", "menu_main"),
-		),
-	)
+	kb := menukit.DiamondMenu()
 	editPhoto(chatID, msgID, "shop", caption, &kb)
 }
 
@@ -1444,27 +1328,10 @@ func showShopHome(chatID int64, msgID int, userID int64) {
 		caption += fmt.Sprintf("*Total: %d*🪙", total)
 	}
 
-	kb := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🧪 Consumíveis", "shop_tab_consumable"),
-			tgbotapi.NewInlineKeyboardButtonData("⚔️ Armas", "shop_tab_weapon"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🛡️ Armaduras", "shop_tab_armor"),
-			tgbotapi.NewInlineKeyboardButtonData("💍 Acessórios", "shop_tab_accessory"),
-		),
-	)
-	if len(cart.Items) > 0 {
-		kb.InlineKeyboard = append(kb.InlineKeyboard, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(
-				fmt.Sprintf("✅ Ver Carrinho (%d item(ns))", len(cart.Items)),
-				"shop_checkout",
-			),
-		))
-	}
-	kb.InlineKeyboard = append(kb.InlineKeyboard, tgbotapi.NewInlineKeyboardRow(
+	kb := menukit.ShopHomeKeyboard(
+		len(cart.Items),
 		menuBackButton(userID, "menu_shop", "menu_main"),
-	))
+	)
 	editPhoto(chatID, msgID, "shop", caption, &kb)
 }
 
@@ -1557,26 +1424,10 @@ func showShopPage(chatID int64, msgID int, userID int64, pageType string) {
 
 	// Botão de checkout se há itens no carrinho
 	if len(cart.Items) > 0 {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(
-				fmt.Sprintf("✅ Ver Carrinho (%d item(ns))", len(cart.Items)),
-				"shop_checkout",
-			),
-		))
+		rows = append(rows, menukit.ShopCheckoutRow(len(cart.Items)))
 	}
-
-	// Tabs de navegação
-	rows = append(rows, []tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardButtonData("🧪 Consumíveis", "shop_tab_consumable"),
-		tgbotapi.NewInlineKeyboardButtonData("⚔️ Armas", "shop_tab_weapon"),
-	})
-	rows = append(rows, []tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardButtonData("🛡️ Armaduras", "shop_tab_armor"),
-		tgbotapi.NewInlineKeyboardButtonData("💍 Acessórios", "shop_tab_accessory"),
-	})
-	rows = append(rows, []tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardButtonData("⬅️ Voltar", "menu_shop"),
-	})
+	rows = append(rows, menukit.ShopCategoryRows()...)
+	rows = append(rows, menukit.ShopBackRow())
 
 	imageKey := assets.ItemTypeImageKey(pageType)
 	kb := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
@@ -2344,10 +2195,10 @@ func handleTravel(chatID int64, msgID int, userID int64, destID string) {
 		editPhoto(chatID, msgID, "travel",
 			fmt.Sprintf("❌ *Sem energia para viajar!*\n\n%s *%d*/%d ⚡\nPrecisa: *%d* ⚡\n\nAguarde a recarga ou use um item de energia.",
 				eBar, char.Energy, char.EnergyMax, game.EnergyTravelCost),
-			&tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{
-				{tgbotapi.NewInlineKeyboardButtonData("⚡ Energia", "menu_energy"),
-					tgbotapi.NewInlineKeyboardButtonData("🏰 Menu", "menu_main")},
-			}})
+			func() *tgbotapi.InlineKeyboardMarkup {
+				kb := menukit.EnergyAndMenu()
+				return &kb
+			}())
 		database.SaveCharacter(char)
 		return
 	}
@@ -2408,15 +2259,7 @@ func showExploreMenu(chatID int64, msgID int, userID int64) {
 		caption += "\n\n❌ *Energia insuficiente!* Aguarde a recarga ou use um item."
 	}
 
-	kb := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(exploreLabel, "fight_random"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⚡ Energia", "menu_energy"),
-			tgbotapi.NewInlineKeyboardButtonData("🏰 Menu", "menu_main"),
-		),
-	)
+	kb := menukit.ExploreMenu(exploreLabel)
 	editPhoto(chatID, msgID, assets.MapImageKey(char.CurrentMap), caption, &kb)
 }
 
@@ -2446,10 +2289,10 @@ func handleFightStart(chatID int64, msgID int, userID int64, _ string) {
 		editPhoto(chatID, msgID, assets.MapImageKey(char.CurrentMap),
 			fmt.Sprintf("❌ *Sem energia para explorar!*\n\n%s *%d*/%d ⚡\nPrecisa: *%d* ⚡\n\nAguarde a recarga ou use um item de energia.",
 				eBar, char.Energy, char.EnergyMax, game.EnergyCombatEnter),
-			&tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{
-				{tgbotapi.NewInlineKeyboardButtonData("⚡ Energia", "menu_energy"),
-					tgbotapi.NewInlineKeyboardButtonData("🏰 Menu", "menu_main")},
-			}})
+			func() *tgbotapi.InlineKeyboardMarkup {
+				kb := menukit.EnergyAndMenu()
+				return &kb
+			}())
 		database.SaveCharacter(char)
 		return
 	}
@@ -2943,12 +2786,7 @@ func handleMonsterDeath(chatID int64, msgID int, char *models.Character, monster
 			lvlUp.NewLevel, lvlUp.HPGained, lvlUp.MPGained, char.EnergyMax)
 	}
 
-	kb := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⚔️ Explorar Mais", "menu_explore"),
-			tgbotapi.NewInlineKeyboardButtonData("🏰 Menu", "menu_main"),
-		),
-	)
+	kb := menukit.VictoryExploreAndMenu()
 	editPhoto(chatID, msgID, "victory", caption, &kb)
 }
 
@@ -2969,9 +2807,7 @@ func handlePlayerDeath(chatID int64, msgID int, char *models.Character, monster 
 		database.SaveCharacter(char)
 		caption := fmt.Sprintf("🔮 *Token de Reviver ativado!*\n\nVocê quase morreu para *%s %s*, mas o token te salvou!\n\n❤️ HP restaurado: *%d*/%d\n💙 MP restaurado: *%d*/%d",
 			monster.Emoji, monster.Name, char.HP, char.HPMax, char.MP, char.MPMax)
-		kb := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🏰 Menu", "menu_main"),
-		))
+		kb := menukit.MenuOnly()
 		editPhoto(chatID, msgID, "victory", caption, &kb)
 		return
 	}
@@ -2983,9 +2819,7 @@ func handlePlayerDeath(chatID int64, msgID int, char *models.Character, monster 
 
 	caption := fmt.Sprintf("💀 *Derrotado por %s %s!*\n\nAcordou na Vila de Trifort...\n\n❤️ %d/%d HP | 💙 %d/%d MP\n🪙 -%d ouro | ✨ -%d XP\n\n💡 _Dica: Use ⚡ Energia para se curar, ou compre um Token de Reviver na Loja de Diamantes!_",
 		monster.Emoji, monster.Name, char.HP, char.HPMax, char.MP, char.MPMax, goldLost, xpLost)
-	kb := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("🏰 Menu", "menu_main"),
-	))
+	kb := menukit.MenuOnly()
 	editPhoto(chatID, msgID, "defeat", caption, &kb)
 }
 
@@ -3008,10 +2842,7 @@ func handleDungeonPlayerDeath(chatID int64, msgID int, char *models.Character, m
 		database.SaveCharacter(char)
 		caption := fmt.Sprintf("🔮 *Token de Reviver ativado!*\n\nVocê quase morreu para *%s %s* na masmorra, mas o token te salvou!\n\n❤️ HP restaurado: *%d*/%d\n💙 MP restaurado: *%d*/%d\n\n_Você permanece no andar atual._",
 			monster.Emoji, monster.Name, char.HP, char.HPMax, char.MP, char.MPMax)
-		kb := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("▶️ Continuar Masmorra", "dungeon_continue"),
-			tgbotapi.NewInlineKeyboardButtonData("🏰 Menu", "menu_main"),
-		))
+		kb := menukit.DungeonContinueAndMenu()
 		editPhoto(chatID, msgID, "victory", caption, &kb)
 		return
 	}
@@ -3046,10 +2877,7 @@ func handleDungeonPlayerDeath(chatID int64, msgID int, char *models.Character, m
 	caption := fmt.Sprintf(
 		"💀 *Derrotado por %s %s na masmorra!*\n\n%s abandonada no andar *%d*.\n\n❤️ %d/%d HP | 🪙 -%d ouro\n\n💡 _Compre um Token de Reviver para não perder o progresso!_",
 		monster.Emoji, monster.Name, dungeonName, floorReached, char.HP, char.HPMax, goldLost)
-	kb := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("🏚️ Masmorras", "menu_dungeon"),
-		tgbotapi.NewInlineKeyboardButtonData("🏰 Menu", "menu_main"),
-	))
+	kb := menukit.DungeonAndMenu()
 	editPhoto(chatID, msgID, "defeat", caption, &kb)
 }
 
@@ -3212,30 +3040,7 @@ func showEquipScreen(chatID int64, msgID int, userID int64) {
 		ca, char.Defense, char.MP, char.MPMax, char.Speed,
 	)
 
-	rows := [][]tgbotapi.InlineKeyboardButton{
-		{
-			tgbotapi.NewInlineKeyboardButtonData("⚔️ Arma", "equip_slot_weapon"),
-			tgbotapi.NewInlineKeyboardButtonData("⛑️ Cabeça", "equip_slot_head"),
-		},
-		{
-			tgbotapi.NewInlineKeyboardButtonData("🛡️ Peito", "equip_slot_chest"),
-			tgbotapi.NewInlineKeyboardButtonData("🧤 Mãos", "equip_slot_hands"),
-		},
-		{
-			tgbotapi.NewInlineKeyboardButtonData("🦵 Pernas", "equip_slot_legs"),
-			tgbotapi.NewInlineKeyboardButtonData("👢 Pés", "equip_slot_feet"),
-		},
-		{
-			tgbotapi.NewInlineKeyboardButtonData("🛡️ Escudo", "equip_slot_offhand"),
-		},
-		{
-			tgbotapi.NewInlineKeyboardButtonData("💍 Anel", "equip_slot_accessory1"),
-			tgbotapi.NewInlineKeyboardButtonData("📿 Colar", "equip_slot_accessory2"),
-		},
-		{tgbotapi.NewInlineKeyboardButtonData("🎒 Inventário", "menu_inventory")},
-		{tgbotapi.NewInlineKeyboardButtonData("🏰 Menu", "menu_main")},
-	}
-	kb := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
+	kb := menukit.EquipHome()
 	editPhoto(chatID, msgID, "inventory", caption, &kb)
 }
 
@@ -3496,25 +3301,7 @@ func showInventoryHome(chatID int64, msgID int, userID int64) {
 		char.Name, char.Gold, char.Diamonds,
 	)
 
-	kb := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🧪 Consumíveis", "inv_tab_consumable"),
-			tgbotapi.NewInlineKeyboardButtonData("⚔️ Armas", "inv_tab_weapon"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🛡️ Armaduras", "inv_tab_armor"),
-			tgbotapi.NewInlineKeyboardButtonData("💍 Acessórios", "inv_tab_accessory"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("📋 Todos", "inv_tab_all"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⚔️ Equipamentos", "menu_equip"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🏰 Menu", "menu_main"),
-		),
-	)
+	kb := menukit.InventoryHomeKeyboard()
 	editPhoto(chatID, msgID, "inventory", caption, &kb)
 }
 
@@ -3569,22 +3356,7 @@ func showInventory(chatID int64, msgID int, userID int64, filterType string) {
 		caption += "\n_Nenhum item nesta categoria._"
 	}
 
-	// Tabs
-	rows = append(rows, []tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardButtonData("🧪 Consumíveis", "inv_tab_consumable"),
-		tgbotapi.NewInlineKeyboardButtonData("⚔️ Armas", "inv_tab_weapon"),
-	})
-	rows = append(rows, []tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardButtonData("🛡️ Armaduras", "inv_tab_armor"),
-		tgbotapi.NewInlineKeyboardButtonData("💍 Acessórios", "inv_tab_accessory"),
-	})
-	rows = append(rows, []tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardButtonData("📋 Todos", "inv_tab_all"),
-		tgbotapi.NewInlineKeyboardButtonData("⬅️ Voltar", "menu_inventory"),
-	})
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("⚔️ Equipamentos", "menu_equip"),
-	))
+	rows = append(rows, menukit.InventoryPageFooterRows()...)
 	kb := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
 	editPhoto(chatID, msgID, "inventory", caption, &kb)
 }
@@ -4386,22 +4158,13 @@ func handleLearnSkill(chatID int64, msgID int, userID int64, skillID string) {
 // =============================================
 
 func confirmDeleteCharacter(chatID int64, msgID int, _ int64) {
-	kb := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("✅ Sim, apagar", "delete_confirm"),
-			tgbotapi.NewInlineKeyboardButtonData("❌ Cancelar", "menu_status"),
-		),
-	)
+	kb := menukit.DeleteConfirm()
 	editPhoto(chatID, msgID, "defeat", "⚠️ *Apagar Personagem?*\n\nIsso é *PERMANENTE*. Todo progresso será perdido!", &kb)
 }
 
 func handleDeleteCharacter(chatID int64, msgID int, userID int64) {
 	database.DeleteCharacter(userID)
-	kb := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⚔️ Criar Novo", "create_character"),
-		),
-	)
+	kb := menukit.DeleteDone()
 	editPhoto(chatID, msgID, "defeat", "✅ Personagem apagado. Até a próxima aventura!", &kb)
 }
 

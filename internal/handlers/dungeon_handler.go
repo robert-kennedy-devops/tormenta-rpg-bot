@@ -8,6 +8,7 @@ import (
 	"github.com/tormenta-bot/internal/assets"
 	"github.com/tormenta-bot/internal/database"
 	"github.com/tormenta-bot/internal/game"
+	menukit "github.com/tormenta-bot/internal/menu"
 	"github.com/tormenta-bot/internal/models"
 )
 
@@ -33,22 +34,15 @@ func showDungeonMenu(chatID int64, msgID int, userID int64) {
 		eBar, char.Energy, char.EnergyMax, game.EnergyDungeonEnter,
 	)
 
-	var rows [][]tgbotapi.InlineKeyboardButton
+	var entryRows [][]tgbotapi.InlineKeyboardButton
+	activeLabel := ""
 
 	// Show active run first
 	activeRun, _ := database.GetActiveDungeonRun(char.ID)
 	if activeRun != nil {
 		d := game.Dungeons[activeRun.DungeonID]
 		caption += fmt.Sprintf("⚔️ *Masmorra Ativa:* %s %s — Andar *%d*/%d\n\n", d.Emoji, d.Name, activeRun.Floor, d.Floors)
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(
-				fmt.Sprintf("▶️ Continuar %s %s (Andar %d)", d.Emoji, d.Name, activeRun.Floor),
-				"dungeon_continue",
-			),
-		))
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🚪 Abandonar Masmorra", "dungeon_abandon"),
-		))
+		activeLabel = fmt.Sprintf("▶️ Continuar %s %s (Andar %d)", d.Emoji, d.Name, activeRun.Floor)
 	} else {
 		for _, d := range dungeons {
 			bestFloor, completions := database.GetDungeonBest(char.ID, d.ID)
@@ -78,16 +72,17 @@ func showDungeonMenu(chatID int64, msgID int, userID int64) {
 			if !canEnter {
 				btnLabel = fmt.Sprintf("🔒 %s %s (sem energia)", d.Emoji, d.Name)
 			}
-			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			entryRows = append(entryRows, tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData(btnLabel, "dungeon_enter_"+d.ID),
 			))
 		}
 	}
 
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("🏰 Menu", "menu_main"),
-	))
-	kb := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
+	kb := menukit.DungeonMenu(menukit.DungeonMenuOptions{
+		HasActive:      activeRun != nil,
+		ActiveContinue: activeLabel,
+		EntryRows:      entryRows,
+	})
 	editPhoto(chatID, msgID, "travel", caption, &kb)
 }
 

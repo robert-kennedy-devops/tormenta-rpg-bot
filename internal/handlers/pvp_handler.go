@@ -8,6 +8,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/tormenta-bot/internal/database"
 	"github.com/tormenta-bot/internal/game"
+	menukit "github.com/tormenta-bot/internal/menu"
 	"github.com/tormenta-bot/internal/models"
 )
 
@@ -32,7 +33,8 @@ func showPVPMenu(chatID int64, msgID int, userID int64) {
 	// Desafio pendente
 	pending, _ := database.GetPendingChallenge(char.ID)
 	pendingSection := ""
-	var pendingRow []tgbotapi.InlineKeyboardButton
+	hasPending := false
+	pendingMatchID := 0
 	if pending != nil {
 		challenger, _ := database.GetCharacterByID(pending.ChallengerID)
 		if challenger != nil {
@@ -42,21 +44,13 @@ func showPVPMenu(chatID int64, msgID int, userID int64) {
 			}
 			pendingSection = fmt.Sprintf("⚔️ *Desafio Recebido!*\n%s Nv.*%d* desafia você (%s)\n\n",
 				challenger.Name, challenger.Level, stakeStr)
-			pendingRow = []tgbotapi.InlineKeyboardButton{
-				tgbotapi.NewInlineKeyboardButtonData("✅ Aceitar Desafio", fmt.Sprintf("pvp_accept_%d", pending.ID)),
-				tgbotapi.NewInlineKeyboardButtonData("❌ Recusar", fmt.Sprintf("pvp_decline_%d", pending.ID)),
-			}
+			hasPending = true
+			pendingMatchID = pending.ID
 		}
 	}
 
 	// Partida ativa
 	active, _ := database.GetActivePVPMatch(char.ID)
-	var activeRow []tgbotapi.InlineKeyboardButton
-	if active != nil {
-		activeRow = []tgbotapi.InlineKeyboardButton{
-			tgbotapi.NewInlineKeyboardButtonData("⚔️ Continuar Combate PVP", "pvp_continue"),
-		}
-	}
 
 	caption := fmt.Sprintf(
 		"⚔️ *Arena PVP*\n\n"+
@@ -74,25 +68,11 @@ func showPVPMenu(chatID int64, msgID int, userID int64) {
 		pendingSection,
 	)
 
-	rows := [][]tgbotapi.InlineKeyboardButton{}
-	if pending != nil && len(pendingRow) > 0 {
-		rows = append(rows, pendingRow)
-	}
-	if active != nil && len(activeRow) > 0 {
-		rows = append(rows, activeRow)
-	}
-	rows = append(rows,
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⚔️ Desafiar Jogador", "pvp_player_list"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🏆 Ranking PVP", "menu_rank"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🏰 Menu", "menu_main"),
-		),
-	)
-	kb := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
+	kb := menukit.PVPMenu(menukit.PVPMenuOptions{
+		HasPending:     hasPending,
+		PendingMatchID: pendingMatchID,
+		HasActive:      active != nil,
+	})
 	editPhoto(chatID, msgID, "combat", caption, &kb)
 }
 
