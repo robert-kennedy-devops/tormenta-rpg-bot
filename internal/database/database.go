@@ -62,6 +62,10 @@ func Migrate() {
 		`ALTER TABLE characters ADD COLUMN IF NOT EXISTS combat_monster_poison_turns int NOT NULL DEFAULT 0`,
 		`ALTER TABLE characters ADD COLUMN IF NOT EXISTS combat_monster_poison_dmg int NOT NULL DEFAULT 0`,
 		`ALTER TABLE inventory ADD COLUMN IF NOT EXISTS slot VARCHAR(20) DEFAULT NULL`,
+		`ALTER TABLE characters ADD COLUMN IF NOT EXISTS last_energy_update BIGINT`,
+		`UPDATE characters
+		  SET last_energy_update = EXTRACT(EPOCH FROM COALESCE(energy_regen_at, NOW()))::BIGINT
+		  WHERE last_energy_update IS NULL OR last_energy_update <= 0`,
 		`UPDATE inventory
 		  SET slot='weapon'
 		  WHERE equipped=true AND COALESCE(slot,'')='' AND item_type='weapon'`,
@@ -95,6 +99,15 @@ func Migrate() {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_player_items_character ON player_items(character_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_player_items_template ON player_items(character_id, template_id)`,
+		`CREATE TABLE IF NOT EXISTS player_timers (
+			player_id BIGINT NOT NULL,
+			key VARCHAR(64) NOT NULL,
+			end_time BIGINT NOT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (player_id, key)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_player_timers_end_time ON player_timers(end_time)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := DB.Exec(stmt); err != nil {
@@ -298,7 +311,9 @@ func GetCharacter(playerID int64) (*models.Character, error) {
 		SELECT id, player_id, name, race, class, level, experience, experience_next,
 			hp, hp_max, mp, mp_max,
 			COALESCE(energy, 100), COALESCE(energy_max, 100),
-			COALESCE(energy_regen_at, NOW()), COALESCE(diamonds, 0),
+			COALESCE(energy_regen_at, NOW()),
+			COALESCE(last_energy_update, EXTRACT(EPOCH FROM COALESCE(energy_regen_at, NOW()))::BIGINT),
+			COALESCE(diamonds, 0),
 			strength, dexterity, constitution, intelligence,
 			wisdom, charisma, attack, defense, magic_attack, magic_defense, speed,
 			gold, current_map, state,
@@ -312,7 +327,7 @@ func GetCharacter(playerID int64) (*models.Character, error) {
 		&char.ID, &char.PlayerID, &char.Name, &char.Race, &char.Class,
 		&char.Level, &char.Experience, &char.ExperienceNext,
 		&char.HP, &char.HPMax, &char.MP, &char.MPMax,
-		&char.Energy, &char.EnergyMax, &char.EnergyRegenAt, &char.Diamonds,
+		&char.Energy, &char.EnergyMax, &char.EnergyRegenAt, &char.LastEnergyUpdate, &char.Diamonds,
 		&char.Strength, &char.Dexterity, &char.Constitution, &char.Intelligence,
 		&char.Wisdom, &char.Charisma,
 		&char.Attack, &char.Defense, &char.MagicAttack, &char.MagicDefense, &char.Speed,
@@ -329,27 +344,30 @@ func GetCharacter(playerID int64) (*models.Character, error) {
 }
 
 func CreateCharacter(char *models.Character) error {
+	if char.LastEnergyUpdate <= 0 {
+		char.LastEnergyUpdate = time.Now().Unix()
+	}
 	return DB.QueryRow(`
 		INSERT INTO characters (
 			player_id, name, race, class, level, experience, experience_next,
 			hp, hp_max, mp, mp_max,
-			energy, energy_max, energy_regen_at, diamonds,
+			energy, energy_max, energy_regen_at, last_energy_update, diamonds,
 			strength, dexterity, constitution, intelligence,
 			wisdom, charisma, attack, defense, magic_attack, magic_defense, speed,
 			gold, current_map, state
 		) VALUES (
 			$1,$2,$3,$4,$5,$6,$7,
 			$8,$9,$10,$11,
-			$12,$13,$14,$15,
-			$16,$17,$18,$19,
-			$20,$21,$22,$23,$24,$25,$26,
-			$27,$28,$29
+			$12,$13,$14,$15,$16,
+			$17,$18,$19,$20,
+			$21,$22,$23,$24,$25,$26,$27,
+			$28,$29,$30
 		) RETURNING id
 	`,
 		char.PlayerID, char.Name, char.Race, char.Class,
 		char.Level, char.Experience, char.ExperienceNext,
 		char.HP, char.HPMax, char.MP, char.MPMax,
-		char.Energy, char.EnergyMax, char.EnergyRegenAt, char.Diamonds,
+		char.Energy, char.EnergyMax, char.EnergyRegenAt, char.LastEnergyUpdate, char.Diamonds,
 		char.Strength, char.Dexterity, char.Constitution, char.Intelligence,
 		char.Wisdom, char.Charisma,
 		char.Attack, char.Defense, char.MagicAttack, char.MagicDefense, char.Speed,
@@ -365,25 +383,28 @@ func SaveCharacter(char *models.Character) error {
 	if char.Energy < 0 {
 		char.Energy = 0
 	}
+	if char.LastEnergyUpdate <= 0 {
+		char.LastEnergyUpdate = time.Now().Unix()
+	}
 	_, err := DB.Exec(`
 		UPDATE characters SET
 			level=$1, experience=$2, experience_next=$3,
 			hp=$4, hp_max=$5, mp=$6, mp_max=$7,
-			energy=$8, energy_max=$9, energy_regen_at=$10, diamonds=$11,
-			strength=$12, dexterity=$13, constitution=$14, intelligence=$15,
-			wisdom=$16, charisma=$17, attack=$18, defense=$19,
-			magic_attack=$20, magic_defense=$21, speed=$22,
-			gold=$23, current_map=$24, state=$25,
-			combat_monster_id=$26, combat_monster_hp=$27, skill_points=$28,
-			deaths=$29, xp_boost_expiry=$30,
-			poison_turns=$31, poison_dmg=$32,
-			combat_monster_poison_turns=$33, combat_monster_poison_dmg=$34,
+			energy=$8, energy_max=$9, energy_regen_at=$10, last_energy_update=$11, diamonds=$12,
+			strength=$13, dexterity=$14, constitution=$15, intelligence=$16,
+			wisdom=$17, charisma=$18, attack=$19, defense=$20,
+			magic_attack=$21, magic_defense=$22, speed=$23,
+			gold=$24, current_map=$25, state=$26,
+			combat_monster_id=$27, combat_monster_hp=$28, skill_points=$29,
+			deaths=$30, xp_boost_expiry=$31,
+			poison_turns=$32, poison_dmg=$33,
+			combat_monster_poison_turns=$34, combat_monster_poison_dmg=$35,
 			updated_at=NOW()
-		WHERE id=$35
+		WHERE id=$36
 	`,
 		char.Level, char.Experience, char.ExperienceNext,
 		char.HP, char.HPMax, char.MP, char.MPMax,
-		char.Energy, char.EnergyMax, char.EnergyRegenAt, char.Diamonds,
+		char.Energy, char.EnergyMax, char.EnergyRegenAt, char.LastEnergyUpdate, char.Diamonds,
 		char.Strength, char.Dexterity, char.Constitution, char.Intelligence,
 		char.Wisdom, char.Charisma,
 		char.Attack, char.Defense, char.MagicAttack, char.MagicDefense, char.Speed,
@@ -407,7 +428,9 @@ func SaveCharacterEnergy(charID int, energy int, energyMax int, regenAt time.Tim
 	}
 	_, err := DB.Exec(`
 		UPDATE characters
-		SET energy=$1, energy_max=$2, energy_regen_at=$3, updated_at=NOW()
+		SET energy=$1, energy_max=$2, energy_regen_at=$3,
+		    last_energy_update=EXTRACT(EPOCH FROM $3)::BIGINT,
+		    updated_at=NOW()
 		WHERE id=$4
 	`, energy, energyMax, regenAt, charID)
 	return err
@@ -1271,7 +1294,9 @@ func GetCharacterByID(charID int) (*models.Character, error) {
 		SELECT id, player_id, name, race, class, level, experience, experience_next,
 			hp, hp_max, mp, mp_max,
 			COALESCE(energy, 100), COALESCE(energy_max, 100),
-			COALESCE(energy_regen_at, NOW()), COALESCE(diamonds, 0),
+			COALESCE(energy_regen_at, NOW()),
+			COALESCE(last_energy_update, EXTRACT(EPOCH FROM COALESCE(energy_regen_at, NOW()))::BIGINT),
+			COALESCE(diamonds, 0),
 			strength, dexterity, constitution, intelligence,
 			wisdom, charisma, attack, defense, magic_attack, magic_defense, speed,
 			gold, current_map, state,
@@ -1285,7 +1310,7 @@ func GetCharacterByID(charID int) (*models.Character, error) {
 		&char.ID, &char.PlayerID, &char.Name, &char.Race, &char.Class,
 		&char.Level, &char.Experience, &char.ExperienceNext,
 		&char.HP, &char.HPMax, &char.MP, &char.MPMax,
-		&char.Energy, &char.EnergyMax, &char.EnergyRegenAt, &char.Diamonds,
+		&char.Energy, &char.EnergyMax, &char.EnergyRegenAt, &char.LastEnergyUpdate, &char.Diamonds,
 		&char.Strength, &char.Dexterity, &char.Constitution, &char.Intelligence,
 		&char.Wisdom, &char.Charisma,
 		&char.Attack, &char.Defense, &char.MagicAttack, &char.MagicDefense, &char.Speed,
@@ -1306,7 +1331,9 @@ func GetCharacterByID(charID int) (*models.Character, error) {
 func SearchCharacters(name string, limit int) ([]models.Character, error) {
 	rows, err := DB.Query(`
 		SELECT id, player_id, name, race, class, level, experience, experience_next,
-		       hp, hp_max, mp, mp_max, energy, energy_max, energy_regen_at, diamonds,
+		       hp, hp_max, mp, mp_max, energy, energy_max, energy_regen_at,
+		       COALESCE(last_energy_update, EXTRACT(EPOCH FROM COALESCE(energy_regen_at, NOW()))::BIGINT),
+		       diamonds,
 		       strength, dexterity, constitution, intelligence, wisdom, charisma,
 		       attack, defense, magic_attack, magic_defense, speed,
 		       gold, current_map, state, combat_monster_id, combat_monster_hp, skill_points, deaths
@@ -1321,7 +1348,7 @@ func SearchCharacters(name string, limit int) ([]models.Character, error) {
 		var c models.Character
 		if err := rows.Scan(&c.ID, &c.PlayerID, &c.Name, &c.Race, &c.Class, &c.Level,
 			&c.Experience, &c.ExperienceNext, &c.HP, &c.HPMax, &c.MP, &c.MPMax,
-			&c.Energy, &c.EnergyMax, &c.EnergyRegenAt, &c.Diamonds,
+			&c.Energy, &c.EnergyMax, &c.EnergyRegenAt, &c.LastEnergyUpdate, &c.Diamonds,
 			&c.Strength, &c.Dexterity, &c.Constitution, &c.Intelligence,
 			&c.Wisdom, &c.Charisma, &c.Attack, &c.Defense,
 			&c.MagicAttack, &c.MagicDefense, &c.Speed,
@@ -1342,7 +1369,9 @@ func SearchCharacters(name string, limit int) ([]models.Character, error) {
 func GetRecentPlayers(excludeCharID int, limit int) ([]models.Character, error) {
 	rows, err := DB.Query(`
 		SELECT id, player_id, name, race, class, level, experience, experience_next,
-		       hp, hp_max, mp, mp_max, energy, energy_max, energy_regen_at, diamonds,
+		       hp, hp_max, mp, mp_max, energy, energy_max, energy_regen_at,
+		       COALESCE(last_energy_update, EXTRACT(EPOCH FROM COALESCE(energy_regen_at, NOW()))::BIGINT),
+		       diamonds,
 		       strength, dexterity, constitution, intelligence, wisdom, charisma,
 		       attack, defense, magic_attack, magic_defense, speed,
 		       gold, current_map, state, combat_monster_id, combat_monster_hp, skill_points, deaths
@@ -1360,7 +1389,7 @@ func GetRecentPlayers(excludeCharID int, limit int) ([]models.Character, error) 
 		var c models.Character
 		if err := rows.Scan(&c.ID, &c.PlayerID, &c.Name, &c.Race, &c.Class, &c.Level,
 			&c.Experience, &c.ExperienceNext, &c.HP, &c.HPMax, &c.MP, &c.MPMax,
-			&c.Energy, &c.EnergyMax, &c.EnergyRegenAt, &c.Diamonds,
+			&c.Energy, &c.EnergyMax, &c.EnergyRegenAt, &c.LastEnergyUpdate, &c.Diamonds,
 			&c.Strength, &c.Dexterity, &c.Constitution, &c.Intelligence,
 			&c.Wisdom, &c.Charisma, &c.Attack, &c.Defense,
 			&c.MagicAttack, &c.MagicDefense, &c.Speed,
@@ -1382,7 +1411,9 @@ func SearchCharacterByName(name string) (*models.Character, error) {
 		SELECT id, player_id, name, race, class, level, experience, experience_next,
 			hp, hp_max, mp, mp_max,
 			COALESCE(energy, 100), COALESCE(energy_max, 100),
-			COALESCE(energy_regen_at, NOW()), COALESCE(diamonds, 0),
+			COALESCE(energy_regen_at, NOW()),
+			COALESCE(last_energy_update, EXTRACT(EPOCH FROM COALESCE(energy_regen_at, NOW()))::BIGINT),
+			COALESCE(diamonds, 0),
 			strength, dexterity, constitution, intelligence,
 			wisdom, charisma, attack, defense, magic_attack, magic_defense, speed,
 			gold, current_map, state,
@@ -1393,7 +1424,7 @@ func SearchCharacterByName(name string) (*models.Character, error) {
 		&char.ID, &char.PlayerID, &char.Name, &char.Race, &char.Class,
 		&char.Level, &char.Experience, &char.ExperienceNext,
 		&char.HP, &char.HPMax, &char.MP, &char.MPMax,
-		&char.Energy, &char.EnergyMax, &char.EnergyRegenAt, &char.Diamonds,
+		&char.Energy, &char.EnergyMax, &char.EnergyRegenAt, &char.LastEnergyUpdate, &char.Diamonds,
 		&char.Strength, &char.Dexterity, &char.Constitution, &char.Intelligence,
 		&char.Wisdom, &char.Charisma,
 		&char.Attack, &char.Defense, &char.MagicAttack, &char.MagicDefense, &char.Speed,

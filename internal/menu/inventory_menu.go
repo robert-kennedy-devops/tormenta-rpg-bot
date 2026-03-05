@@ -13,6 +13,7 @@ func InventoryFilterRows() [][]tgbotapi.InlineKeyboardButton {
 			Btn("💍 Acessórios", "inv_tab_accessory"),
 		),
 		Row(
+			Btn("🧱 Materiais", "inv_tab_material"),
 			Btn("📋 Todos", "inv_tab_all"),
 		),
 	}
@@ -36,6 +37,9 @@ func InventoryPageFooterRows() [][]tgbotapi.InlineKeyboardButton {
 		Row(
 			Btn("🛡️ Armaduras", "inv_tab_armor"),
 			Btn("💍 Acessórios", "inv_tab_accessory"),
+		),
+		Row(
+			Btn("🧱 Materiais", "inv_tab_material"),
 		),
 		Row(
 			Btn("📋 Todos", "inv_tab_all"),

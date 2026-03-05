@@ -61,6 +61,7 @@ ABACATEPAY_TOKEN=acp_...             # Habilita pagamentos Pix
 MP_WEBHOOK_PORT=8080                 # Porta HTTP para webhooks (padrão: 8080)
 GM_LOG_CHAT=-100123456789            # Grupo para logs de ações GM
 ASSETS_DIR=./assets/images           # Diretório de imagens geradas
+DUNGEON_PROCEDURAL_ENABLED=false     # true=gera dungeons procedurais (5-10 salas)
 ```
 
 **Importante:** nunca faça commit do arquivo `.env`. Se você chegou a compartilhar tokens reais (Telegram/AbacatePay), faça **rotação** imediata no painel correspondente.
@@ -69,7 +70,7 @@ ASSETS_DIR=./assets/images           # Diretório de imagens geradas
 
 ## Banco de dados
 
-O projeto usa **migrações incrementais** em `migrations/001_init.sql` até `migrations/015_player_items.sql`.
+O projeto usa **migrações incrementais** em `migrations/001_init.sql` até `migrations/017_player_timers.sql`.
 
 Para subir do zero (manual), aplique os `.sql` em ordem:
 
@@ -84,6 +85,8 @@ Evoluções recentes de schema:
 - `013_backfill_equipped_slots.sql`: normalização/backfill de slots equipados.
 - `014_shield_offhand_slot.sql`: cria e ajusta o slot dedicado `offhand` (escudo).
 - `015_player_items.sql`: adiciona instâncias de item por personagem para progressão de forja (`upgrade_level`, quebra e equip por instância).
+- `016_energy_timestamp.sql`: energia com cálculo por timestamp (`last_energy_update`) sem worker de regen.
+- `017_player_timers.sql`: timers genéricos por jogador (`player_timers`) para cooldowns/sistemas.
 
 ## Atualizações recentes
 
@@ -103,6 +106,7 @@ Evoluções recentes de schema:
   - Roteamento dedicado de mensagens/callbacks em `internal/router/`.
   - Engine de menus reutilizável em `internal/menu/` para reduzir duplicação de teclado inline.
   - Camada inicial de serviços em `internal/services/` para separar lógica de negócio dos handlers.
+  - Auto-caça em modo offline: processamento por ciclos com base em `last_tick_at` quando o jogador retorna.
 - Navegação:
   - Botões `⬅️ Voltar` padronizados com destino contextual (inventário, loja, habilidades, vender).
   - `🛒 Loja` e `💰 Vender` disponíveis de forma fixa no menu principal.
@@ -128,6 +132,7 @@ Evoluções recentes de schema:
 | `pvp_challenges` / `pvp_stats` | Duelos e ranking ELO |
 | `pix_payments` | Pagamentos Pix |
 | `auto_hunt_sessions` | Sessões de caça automática VIP |
+| `player_timers` | Timers/cooldowns genéricos por jogador |
 | `diamond_log` | Log de transações de diamantes |
 | `combat_log` | Histórico de combates |
 | `daily_bonus` | Controle de bônus diário |
@@ -183,6 +188,8 @@ tormenta-bot/
 │   │   └── default_tables.go   # Tabelas padrão de materiais
 │   ├── crafting/
 │   │   └── crafting.go         # Receitas e consumo de materiais
+│   ├── dungeon/
+│   │   └── generator.go        # Geração procedural de salas (5-10)
 │   ├── explore/
 │   │   └── events.go           # Eventos aleatórios de exploração
 │   ├── menu/
@@ -198,7 +205,10 @@ tormenta-bot/
 │   │   ├── player_service.go   # Regras de jogador
 │   │   ├── shop_service.go     # Regras de loja/compra
 │   │   ├── combat_service.go   # Regras de combate
+│   │   ├── autohunt_service.go # Processamento offline de ciclos da auto-caça
 │   │   └── drop_service.go     # Serviço de drop por contexto de jogo
+│   ├── timers/
+│   │   └── store.go            # Persistência de timers/cooldowns
 │   └── models/
 │       └── models.go           # Structs: Character, Player, Item, Monster...
 ├── migrations/
@@ -206,7 +216,9 @@ tormenta-bot/
 │   ├── ...
 │   ├── 013_backfill_equipped_slots.sql
 │   ├── 014_shield_offhand_slot.sql
-│   └── 015_player_items.sql
+│   ├── 015_player_items.sql
+│   ├── 016_energy_timestamp.sql
+│   └── 017_player_timers.sql
 ├── scripts/
 │   ├── update.ps1              # Atualização com backup (Windows)
 │   └── update.sh               # Atualização com backup (Linux/macOS)
@@ -297,6 +309,7 @@ Efeitos de combate ativos:
 ### Masmorras
 
 Sequências de andares com dificuldade crescente, cada andar custa 1⚡. A recompensa final inclui ouro escalado e itens raros. Os recordes são salvos em `dungeon_best`.
+Com `DUNGEON_PROCEDURAL_ENABLED=true`, cada run gera automaticamente entre 5 e 10 salas (`monster/treasure/trap/elite/boss`) de forma determinística por sessão.
 
 ---
 
@@ -381,6 +394,7 @@ Exemplo:
 - 🤖 Caça automática (offline hunting)
 
 **Caça automática:** o jogador seleciona uma zona e inicia a sessão. Um worker em background executa ticks a cada 5 minutos — consome 1⚡, sorteia monstro, simula combate e credita recompensas. O relatório mostra status consolidado (kills, XP, ouro, nível e diamantes) sem spam de notificação por tick. Para automaticamente se energia zerar, personagem morrer ou VIP expirar.
+**Caça automática:** o jogador seleciona uma zona e inicia a sessão. O progresso é processado em modo offline por ciclos de 60s com base no `last_tick_at` quando o jogador abre painel/relatório/stop. Cada ciclo consome 1⚡, sorteia monstro, simula combate e credita recompensas. Para automaticamente se energia zerar, personagem morrer ou VIP expirar.
 
 ---
 

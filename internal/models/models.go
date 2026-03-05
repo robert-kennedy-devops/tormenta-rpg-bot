@@ -24,41 +24,42 @@ func (p *Player) IsVIPActive() bool {
 
 // ── Character ─────────────────────────────────────────────
 type Character struct {
-	ID              int       `db:"id"`
-	PlayerID        int64     `db:"player_id"`
-	Name            string    `db:"name"`
-	Race            string    `db:"race"`
-	Class           string    `db:"class"`
-	Level           int       `db:"level"`
-	Experience      int       `db:"experience"`
-	ExperienceNext  int       `db:"experience_next"`
-	HP              int       `db:"hp"`
-	HPMax           int       `db:"hp_max"`
-	MP              int       `db:"mp"`
-	MPMax           int       `db:"mp_max"`
-	Energy          int       `db:"energy"`
-	EnergyMax       int       `db:"energy_max"`
-	EnergyRegenAt   time.Time `db:"energy_regen_at"`
-	Diamonds        int       `db:"diamonds"`
-	Strength        int       `db:"strength"`
-	Dexterity       int       `db:"dexterity"`
-	Constitution    int       `db:"constitution"`
-	Intelligence    int       `db:"intelligence"`
-	Wisdom          int       `db:"wisdom"`
-	Charisma        int       `db:"charisma"`
-	Attack          int       `db:"attack"`
-	Defense         int       `db:"defense"`
-	MagicAttack     int       `db:"magic_attack"`
-	MagicDefense    int       `db:"magic_defense"`
-	Speed           int       `db:"speed"`
-	Gold            int       `db:"gold"`
-	CurrentMap      string    `db:"current_map"`
-	State           string    `db:"state"` // idle | combat | dungeon | pvp
-	CombatMonsterID string    `db:"combat_monster_id"`
-	CombatMonsterHP int       `db:"combat_monster_hp"`
-	SkillPoints     int       `db:"skill_points"`
-	Deaths          int       `db:"deaths"`
-	XPBoostExpiry   time.Time `db:"xp_boost_expiry"` // ativo se After(time.Now())
+	ID               int       `db:"id"`
+	PlayerID         int64     `db:"player_id"`
+	Name             string    `db:"name"`
+	Race             string    `db:"race"`
+	Class            string    `db:"class"`
+	Level            int       `db:"level"`
+	Experience       int       `db:"experience"`
+	ExperienceNext   int       `db:"experience_next"`
+	HP               int       `db:"hp"`
+	HPMax            int       `db:"hp_max"`
+	MP               int       `db:"mp"`
+	MPMax            int       `db:"mp_max"`
+	Energy           int       `db:"energy"`
+	EnergyMax        int       `db:"energy_max"`
+	EnergyRegenAt    time.Time `db:"energy_regen_at"`
+	LastEnergyUpdate int64     `db:"last_energy_update"` // unix timestamp (seconds)
+	Diamonds         int       `db:"diamonds"`
+	Strength         int       `db:"strength"`
+	Dexterity        int       `db:"dexterity"`
+	Constitution     int       `db:"constitution"`
+	Intelligence     int       `db:"intelligence"`
+	Wisdom           int       `db:"wisdom"`
+	Charisma         int       `db:"charisma"`
+	Attack           int       `db:"attack"`
+	Defense          int       `db:"defense"`
+	MagicAttack      int       `db:"magic_attack"`
+	MagicDefense     int       `db:"magic_defense"`
+	Speed            int       `db:"speed"`
+	Gold             int       `db:"gold"`
+	CurrentMap       string    `db:"current_map"`
+	State            string    `db:"state"` // idle | combat | dungeon | pvp
+	CombatMonsterID  string    `db:"combat_monster_id"`
+	CombatMonsterHP  int       `db:"combat_monster_hp"`
+	SkillPoints      int       `db:"skill_points"`
+	Deaths           int       `db:"deaths"`
+	XPBoostExpiry    time.Time `db:"xp_boost_expiry"` // ativo se After(time.Now())
 	// Veneno no player (aplicado por monstros)
 	PoisonTurns int `db:"poison_turns"`
 	PoisonDmg   int `db:"poison_dmg"`

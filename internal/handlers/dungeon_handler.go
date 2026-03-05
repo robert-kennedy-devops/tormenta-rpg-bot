@@ -2,16 +2,160 @@ package handlers
 
 import (
 	"fmt"
+	"hash/fnv"
+	"math/rand"
+	"os"
 	"strings"
+	"sync"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/tormenta-bot/internal/assets"
 	"github.com/tormenta-bot/internal/database"
 	"github.com/tormenta-bot/internal/drops"
+	dgen "github.com/tormenta-bot/internal/dungeon"
 	"github.com/tormenta-bot/internal/game"
 	menukit "github.com/tormenta-bot/internal/menu"
 	"github.com/tormenta-bot/internal/models"
 )
+
+const proceduralDungeonEnv = "DUNGEON_PROCEDURAL_ENABLED"
+
+var proceduralDungeonFlag struct {
+	once    sync.Once
+	enabled bool
+}
+
+func isProceduralDungeonEnabled() bool {
+	proceduralDungeonFlag.once.Do(func() {
+		v := strings.TrimSpace(strings.ToLower(os.Getenv(proceduralDungeonEnv)))
+		proceduralDungeonFlag.enabled = v == "1" || v == "true" || v == "yes" || v == "on"
+	})
+	return proceduralDungeonFlag.enabled
+}
+
+func dungeonSeed(run *database.DungeonRun, dungeonID string) int64 {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(dungeonID))
+	return int64(run.ID)*1_000_003 + int64(h.Sum32())
+}
+
+func getProceduralDungeon(run *database.DungeonRun, d *game.Dungeon) *dgen.Dungeon {
+	if run == nil || d == nil || !isProceduralDungeonEnabled() {
+		return nil
+	}
+	gen := dgen.Generate(d.MaxLevel, dungeonSeed(run, d.ID))
+	return &gen
+}
+
+func getDungeonMaxFloors(run *database.DungeonRun, d *game.Dungeon) int {
+	if d == nil {
+		return 0
+	}
+	if pd := getProceduralDungeon(run, d); pd != nil && len(pd.Rooms) > 0 {
+		return len(pd.Rooms)
+	}
+	return d.Floors
+}
+
+func getDungeonFloorInfo(run *database.DungeonRun, d *game.Dungeon, floor int) (string, bool) {
+	if pd := getProceduralDungeon(run, d); pd != nil {
+		if floor >= 1 && floor <= len(pd.Rooms) {
+			room := pd.Rooms[floor-1]
+			return proceduralRoomDescription(room.Type), room.Type == dgen.RoomBoss
+		}
+	}
+	fd := game.GetDungeonFloor(d.ID, floor)
+	if fd == nil {
+		return "", false
+	}
+	return fd.Description, fd.IsBoss
+}
+
+func proceduralRoomDescription(rt dgen.RoomType) string {
+	switch rt {
+	case dgen.RoomTreasure:
+		return "Sala do Tesouro Procedural"
+	case dgen.RoomTrap:
+		return "Corredor de Armadilhas"
+	case dgen.RoomElite:
+		return "Arena da Elite"
+	case dgen.RoomBoss:
+		return "Núcleo do Chefe"
+	default:
+		return "Câmara de Monstros"
+	}
+}
+
+func rollDungeonMonsterForRun(run *database.DungeonRun, d *game.Dungeon, floor int) *models.Monster {
+	pd := getProceduralDungeon(run, d)
+	if pd == nil || floor < 1 || floor > len(pd.Rooms) {
+		return game.RollDungeonMonster(d.ID, floor)
+	}
+	room := pd.Rooms[floor-1]
+	minLv := d.MinLevel
+	maxLv := d.MaxLevel + 3
+	var candidates []models.Monster
+	for _, m := range game.Monsters {
+		if m.Level >= minLv && m.Level <= maxLv {
+			candidates = append(candidates, m)
+		}
+	}
+	if len(candidates) == 0 {
+		return game.RollDungeonMonster(d.ID, floor)
+	}
+
+	pick := candidates[rand.Intn(len(candidates))]
+	boost := dgen.LootMultiplier(d.MaxLevel, room.Type)
+	switch room.Type {
+	case dgen.RoomTreasure:
+		pick.Name = "Guardião do Tesouro"
+		pick.HP = int(float64(pick.HP) * 0.85)
+		pick.Attack = int(float64(pick.Attack) * 0.9)
+		pick.GoldReward = int(float64(pick.GoldReward) * 1.5 * boost)
+	case dgen.RoomTrap:
+		pick.Name = "Sentinela da Armadilha"
+		pick.HP = int(float64(pick.HP) * 0.9)
+		pick.Attack = int(float64(pick.Attack) * 1.15)
+		pick.GoldReward = int(float64(pick.GoldReward) * 0.8 * boost)
+	case dgen.RoomElite:
+		pick.Name = "Elite " + pick.Name
+		pick.HP = int(float64(pick.HP) * 1.35)
+		pick.Attack = int(float64(pick.Attack) * 1.2)
+		pick.Defense = int(float64(pick.Defense) * 1.15)
+		pick.GoldReward = int(float64(pick.GoldReward) * 1.4 * boost)
+		pick.ExpReward = int(float64(pick.ExpReward) * 1.4 * boost)
+		pick.DiamondChance += 10
+	case dgen.RoomBoss:
+		pick.Name = "👑 " + pick.Name + " (Chefe)"
+		pick.HP = int(float64(pick.HP) * 1.8)
+		pick.Attack = int(float64(pick.Attack) * 1.35)
+		pick.Defense = int(float64(pick.Defense) * 1.2)
+		pick.GoldReward = int(float64(pick.GoldReward) * 2.0 * boost)
+		pick.ExpReward = int(float64(pick.ExpReward) * 2.0 * boost)
+		pick.DiamondChance += 25
+	default:
+		pick.GoldReward = int(float64(pick.GoldReward) * boost)
+		pick.ExpReward = int(float64(pick.ExpReward) * boost)
+	}
+	if pick.HP < 1 {
+		pick.HP = 1
+	}
+	if pick.Attack < 1 {
+		pick.Attack = 1
+	}
+	return &pick
+}
+
+func scaledDungeonRewards(d *game.Dungeon, floorsCleared, totalFloors int) (int, int, string) {
+	if d == nil || floorsCleared <= 0 || totalFloors <= 0 {
+		return 0, 0, ""
+	}
+	if floorsCleared >= totalFloors {
+		return d.RewardGold, d.RewardDiamonds, d.RewardItem
+	}
+	pct := float64(floorsCleared) / float64(totalFloors)
+	return int(float64(d.RewardGold) * pct), int(float64(d.RewardDiamonds) * pct), ""
+}
 
 // =============================================
 // DUNGEON HANDLERS
@@ -42,7 +186,8 @@ func showDungeonMenu(chatID int64, msgID int, userID int64) {
 	activeRun, _ := database.GetActiveDungeonRun(char.ID)
 	if activeRun != nil {
 		d := game.Dungeons[activeRun.DungeonID]
-		caption += fmt.Sprintf("⚔️ *Masmorra Ativa:* %s %s — Andar *%d*/%d\n\n", d.Emoji, d.Name, activeRun.Floor, d.Floors)
+		maxFloors := getDungeonMaxFloors(activeRun, &d)
+		caption += fmt.Sprintf("⚔️ *Masmorra Ativa:* %s %s — Andar *%d*/%d\n\n", d.Emoji, d.Name, activeRun.Floor, maxFloors)
 		activeLabel = fmt.Sprintf("▶️ Continuar %s %s (Andar %d)", d.Emoji, d.Name, activeRun.Floor)
 	} else {
 		for _, d := range dungeons {
@@ -61,11 +206,15 @@ func showDungeonMenu(chatID int64, msgID int, userID int64) {
 				locked = " ⚡insuf."
 			}
 
+			floorLabel := fmt.Sprintf("%d andares", d.Floors)
+			if isProceduralDungeonEnabled() {
+				floorLabel = "5-10 salas"
+			}
 			caption += fmt.Sprintf(
-				"%s %s *%s*%s\n%s_%s_\nNv.%d-%d | %d andares | 🪙+%d | 💎+%d%s\n\n",
+				"%s %s *%s*%s\n%s_%s_\nNv.%d-%d | %s | 🪙+%d | 💎+%d%s\n\n",
 				diffEmoji, d.Emoji, d.Name, completionStr,
 				bestStr+"\n", d.Description,
-				d.MinLevel, d.MaxLevel, d.Floors, d.RewardGold, d.RewardDiamonds, locked,
+				d.MinLevel, d.MaxLevel, floorLabel, d.RewardGold, d.RewardDiamonds, locked,
 			)
 
 			canEnter := char.Energy >= game.EnergyDungeonEnter
@@ -165,7 +314,7 @@ func handleDungeonFight(chatID int64, msgID int, userID int64) {
 		return
 	}
 
-	monster := game.RollDungeonMonster(run.DungeonID, run.Floor)
+	monster := rollDungeonMonsterForRun(run, &d, run.Floor)
 	if monster == nil {
 		return
 	}
@@ -193,7 +342,8 @@ func handleDungeonAbandon(chatID int64, msgID int, userID int64) {
 	d := game.Dungeons[run.DungeonID]
 
 	// Partial rewards
-	rewardGold, rewardDiamonds, _ := game.DungeonCompleteRewards(run.DungeonID, run.Floor-1, char)
+	maxFloors := getDungeonMaxFloors(run, &d)
+	rewardGold, rewardDiamonds, _ := scaledDungeonRewards(&d, run.Floor-1, maxFloors)
 	char.Gold += rewardGold
 	if rewardDiamonds > 0 {
 		char.Diamonds += rewardDiamonds
@@ -210,7 +360,7 @@ func handleDungeonAbandon(chatID int64, msgID int, userID int64) {
 
 	caption := fmt.Sprintf(
 		"🚪 *Masmorra abandonada*\n\n%s %s — Andar %d/%d\n\n🎁 Recompensa parcial: +%d 🪙",
-		d.Emoji, d.Name, run.Floor-1, d.Floors, rewardGold,
+		d.Emoji, d.Name, run.Floor-1, maxFloors, rewardGold,
 	)
 	if rewardDiamonds > 0 {
 		caption += fmt.Sprintf(" | +%d 💎", rewardDiamonds)
@@ -219,8 +369,9 @@ func handleDungeonAbandon(chatID int64, msgID int, userID int64) {
 }
 
 func renderDungeonFloor(chatID int64, msgID int, char *models.Character, run *database.DungeonRun, d *game.Dungeon, log string) {
-	floorData := game.GetDungeonFloor(d.ID, run.Floor)
-	if floorData == nil {
+	maxFloors := getDungeonMaxFloors(run, d)
+	description, isBoss := getDungeonFloorInfo(run, d, run.Floor)
+	if description == "" {
 		return
 	}
 
@@ -233,7 +384,7 @@ func renderDungeonFloor(chatID int64, msgID int, char *models.Character, run *da
 	diffEmoji := game.DifficultyEmoji(d.Difficulty)
 
 	bossTag := ""
-	if floorData.IsBoss {
+	if isBoss {
 		bossTag = " 🔥 *BOSS*"
 	}
 
@@ -243,8 +394,8 @@ func renderDungeonFloor(chatID int64, msgID int, char *models.Character, run *da
 			"%s %d/%d HP | 💙 %d/%d MP\n"+
 			"⚡ %s *%d*/%d Energia\n\n"+
 			"%s",
-		diffEmoji, d.Emoji, d.Name, run.Floor, d.Floors, bossTag,
-		floorData.Description,
+		diffEmoji, d.Emoji, d.Name, run.Floor, maxFloors, bossTag,
+		description,
 		hpBar, char.HP, char.HPMax, char.MP, char.MPMax,
 		eBar, char.Energy, char.EnergyMax,
 		log,
@@ -309,17 +460,18 @@ func renderDungeonCombat(chatID int64, msgID int, char *models.Character, monste
 	diffEmoji := game.DifficultyEmoji(d.Difficulty)
 
 	bossTag := ""
-	floorData := game.GetDungeonFloor(d.ID, run.Floor)
-	if floorData != nil && floorData.IsBoss {
+	_, isBoss := getDungeonFloorInfo(run, d, run.Floor)
+	if isBoss {
 		bossTag = " 🔥 BOSS"
 	}
+	maxFloors := getDungeonMaxFloors(run, d)
 
 	caption := fmt.Sprintf(
 		"%s %s *%s* — Andar *%d*/%d%s\n\n"+
 			"%s *%s* Nv.*%d*\n%s %d/%d HP\n\n"+
 			"%s *%s* Nv.*%d*\n%s %d/%d HP | 💙 %d/%d MP | ⚡ %d\n%s\n\n"+
 			"━━━━━━━━━━━━\n%s",
-		diffEmoji, d.Emoji, d.Name, run.Floor, d.Floors, bossTag,
+		diffEmoji, d.Emoji, d.Name, run.Floor, maxFloors, bossTag,
 		monster.Emoji, monster.Name, monster.Level, mBar, char.CombatMonsterHP, monster.HP,
 		game.Races[char.Race].Emoji, char.Name, char.Level, pBar, char.HP, char.HPMax, char.MP, char.MPMax, char.Energy,
 		eBar, truncateCombatLog(combatLog, 4),
@@ -450,12 +602,13 @@ func handleDungeonMonsterDeath(chatID int64, msgID int, char *models.Character, 
 		resultLog += fmt.Sprintf("\n🎉 *NÍVEL UP! Nv.%d*", lvlUp.NewLevel)
 	}
 
+	maxFloors := getDungeonMaxFloors(run, &d)
 	nextFloor := run.Floor + 1
-	isCompleted := nextFloor > d.Floors
+	isCompleted := nextFloor > maxFloors
 
 	if isCompleted {
 		// Dungeon complete!
-		rewardGold, rewardDiamonds, rewardItem := game.DungeonCompleteRewards(run.DungeonID, d.Floors, char)
+		rewardGold, rewardDiamonds, rewardItem := scaledDungeonRewards(&d, maxFloors, maxFloors)
 		char.Gold += rewardGold
 		char.Diamonds += rewardDiamonds
 		if rewardItem != "" {
@@ -464,7 +617,7 @@ func handleDungeonMonsterDeath(chatID int64, msgID int, char *models.Character, 
 		}
 		database.LogDiamond(char.ID, rewardDiamonds, "dungeon_complete_"+run.DungeonID)
 		database.FinishDungeonRun(run.ID, "completed")
-		database.UpdateDungeonBest(char.ID, run.DungeonID, d.Floors, true)
+		database.UpdateDungeonBest(char.ID, run.DungeonID, maxFloors, true)
 		database.SaveCharacter(char)
 
 		itemStr := ""
@@ -524,9 +677,10 @@ func handleDungeonFloorItem(chatID int64, msgID int, userID int64) {
 		return
 	}
 	d := game.Dungeons[run.DungeonID]
+	maxFloors := getDungeonMaxFloors(run, &d)
 
 	items, _ := database.GetInventory(char.ID)
-	caption := fmt.Sprintf("🎒 *Itens — Andar %d/%d*\n\n", run.Floor, d.Floors)
+	caption := fmt.Sprintf("🎒 *Itens — Andar %d/%d*\n\n", run.Floor, maxFloors)
 	var rows [][]tgbotapi.InlineKeyboardButton
 
 	count := 0

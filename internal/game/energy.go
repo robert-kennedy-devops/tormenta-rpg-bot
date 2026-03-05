@@ -13,9 +13,9 @@ import (
 const (
 	EnergyRegenInterval    = 10 * time.Minute // 1 energy every 10 min (normal)
 	EnergyRegenIntervalVIP = 5 * time.Minute  // 1 energy every 5 min (VIP)
-	EnergyBaseMax          = 100
-	EnergyBaseMaxVIP       = 200 // VIP has double energy cap
-	EnergyPerLevel         = 0   // sem crescimento de energia por nível
+	EnergyBaseMax          = 100              // fixed cap (normal)
+	EnergyBaseMaxVIP       = 200              // fixed cap (VIP)
+	EnergyPerLevel         = 0                // sem crescimento de energia por nível
 
 	// Costs (energy → vitals)
 	EnergyPerHP = 5 // 1 energy = 5 HP recovered
@@ -64,12 +64,26 @@ func TickEnergy(char *models.Character) int {
 
 // TickEnergyVIP applies accumulated regeneration with VIP-aware interval.
 func TickEnergyVIP(char *models.Character, isVIP bool) int {
+	if char == nil {
+		return 0
+	}
+	if isVIP {
+		char.EnergyMax = EnergyBaseMaxVIP
+	} else {
+		char.EnergyMax = EnergyBaseMax
+	}
+
 	interval := RegenInterval(isVIP)
 	now := time.Now()
+	nowUnix := now.Unix()
+	intervalSec := int64(interval.Seconds())
+	if intervalSec <= 0 {
+		return 0
+	}
 
-	// Sanity check: se EnergyRegenAt for zero ou mais de 30 dias atrás,
-	// significa dado corrompido/não inicializado — reseta para agora sem ganhar energia.
-	if char.EnergyRegenAt.IsZero() || now.Sub(char.EnergyRegenAt) > 30*24*time.Hour {
+	// Inicializa timestamp se necessário.
+	if char.LastEnergyUpdate <= 0 {
+		char.LastEnergyUpdate = nowUnix
 		char.EnergyRegenAt = now
 		return 0
 	}
@@ -77,15 +91,16 @@ func TickEnergyVIP(char *models.Character, isVIP bool) int {
 	// Já no máximo — apenas avança o clock para não acumular "ticks fantasmas"
 	if char.Energy >= char.EnergyMax {
 		char.Energy = char.EnergyMax // garante que nunca ultrapasse
+		char.LastEnergyUpdate = nowUnix
 		char.EnergyRegenAt = now
 		return 0
 	}
 
-	elapsed := now.Sub(char.EnergyRegenAt)
-	if elapsed < interval {
+	elapsedSec := nowUnix - char.LastEnergyUpdate
+	if elapsedSec < intervalSec {
 		return 0
 	}
-	ticks := int(elapsed / interval)
+	ticks := int(elapsedSec / intervalSec)
 	if ticks == 0 {
 		return 0
 	}
@@ -104,11 +119,12 @@ func TickEnergyVIP(char *models.Character, isVIP bool) int {
 	// Avança o clock apenas pelos ticks efetivamente consumidos,
 	// mas descarta ticks excedentes se já chegou ao máximo.
 	if char.Energy >= char.EnergyMax {
-		// Chegou ao teto durante este tick — reseta o clock para evitar
-		// acúmulo de ticks "não usados" que fariam a energia ultrapassar o máximo
+		// Evita acúmulo de ganho quando já está no teto.
+		char.LastEnergyUpdate = nowUnix
 		char.EnergyRegenAt = now
 	} else {
-		char.EnergyRegenAt = char.EnergyRegenAt.Add(time.Duration(ticks) * interval)
+		char.LastEnergyUpdate += int64(ticks) * intervalSec
+		char.EnergyRegenAt = time.Unix(char.LastEnergyUpdate, 0)
 	}
 	return gain
 }
@@ -121,12 +137,18 @@ func NextRegenIn(char *models.Character) time.Duration {
 
 // NextRegenInVIP returns duration until next energy point, considering VIP.
 func NextRegenInVIP(char *models.Character, isVIP bool) time.Duration {
+	if char == nil {
+		return 0
+	}
 	if char.Energy >= char.EnergyMax {
 		return 0
 	}
 	interval := RegenInterval(isVIP)
-	elapsed := time.Since(char.EnergyRegenAt)
-	remaining := interval - elapsed
+	if char.LastEnergyUpdate <= 0 {
+		return interval
+	}
+	elapsed := time.Now().Unix() - char.LastEnergyUpdate
+	remaining := interval - time.Duration(elapsed)*time.Second
 	if remaining < 0 {
 		return 0
 	}

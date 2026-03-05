@@ -252,6 +252,8 @@ func HandleCallback(cb *tgbotapi.CallbackQuery) {
 		showInventory(chatID, msgID, userID, "all")
 	case data == "inv_tab_accessory":
 		showInventory(chatID, msgID, userID, "accessory")
+	case data == "inv_tab_material":
+		showInventory(chatID, msgID, userID, "material")
 	case strings.HasPrefix(data, "inv_item_"):
 		rest := strings.TrimPrefix(data, "inv_item_")
 		parts := strings.SplitN(rest, "_", 2)
@@ -636,32 +638,8 @@ func tickEnergyForPlayer(userID int64) {
 
 // StartEnergyRegenWorker ticks energy for offline players in background.
 func StartEnergyRegenWorker() {
-	go func() {
-		ticker := time.NewTicker(1 * time.Minute)
-		defer ticker.Stop()
-		log.Println("[Energy] Background regen worker started (interval: 1m)")
-		for range ticker.C {
-			chars, err := database.GetCharactersNeedingEnergyTick(5000)
-			if err != nil {
-				log.Printf("[Energy] failed to load characters: %v", err)
-				continue
-			}
-			updated := 0
-			for i := range chars {
-				if game.TickEnergy(&chars[i]) <= 0 {
-					continue
-				}
-				if err := database.SaveCharacterEnergy(chars[i].ID, chars[i].Energy, chars[i].EnergyMax, chars[i].EnergyRegenAt); err != nil {
-					log.Printf("[Energy] failed to save char %d: %v", chars[i].ID, err)
-					continue
-				}
-				updated++
-			}
-			if updated > 0 {
-				log.Printf("[Energy] regenerated energy for %d character(s)", updated)
-			}
-		}
-	}()
+	// Compat: regen agora é totalmente baseada em timestamp (sem worker).
+	log.Println("[Energy] timestamp regen mode enabled (worker disabled)")
 }
 
 // =============================================
@@ -1845,6 +1823,7 @@ func showSellPage(chatID int64, msgID int, userID int64, filterType string) {
 		"weapon":     "Armas",
 		"armor":      "Armaduras",
 		"accessory":  "Acessórios",
+		"material":   "Materiais",
 	}
 	tabName := tabNames[filterType]
 	if tabName == "" {

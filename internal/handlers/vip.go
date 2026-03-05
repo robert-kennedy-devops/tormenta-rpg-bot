@@ -14,6 +14,8 @@ import (
 	"github.com/tormenta-bot/internal/game"
 	menukit "github.com/tormenta-bot/internal/menu"
 	"github.com/tormenta-bot/internal/models"
+	"github.com/tormenta-bot/internal/services"
+	"github.com/tormenta-bot/internal/timers"
 )
 
 // =============================================
@@ -94,6 +96,11 @@ func showVIPPanel(chatID int64, msgID int, userID int64) {
 	if char == nil {
 		return
 	}
+	_, _ = processAutoHuntOffline(char.ID, autoHuntRefreshCycles)
+	char, _ = database.GetCharacter(userID)
+	if char == nil {
+		return
+	}
 	isVIP := database.IsVIP(userID)
 
 	vipStatus := "❌ Não ativo"
@@ -131,7 +138,7 @@ func showVIPPanel(chatID int64, msgID int, userID int64) {
 			"Status: %s\n\n"+
 			"*Benefícios VIP:*\n"+
 			"⚡ Energia máx: *%d* (normal: %d)\n"+
-			"⏱️ Recarga: *8 min* (normal: 10 min)\n"+
+			"⏱️ Recarga: *5 min* (normal: 10 min)\n"+
 			"🏹 Caça automática com habilidades e poções\n\n"+
 			"*Caça Automática:*\n"+
 			"%s%s",
@@ -504,7 +511,7 @@ func handleAutoHuntStart(chatID int64, msgID int, userID int64, mapID string, cf
 	}
 
 	// Lança o loop contínuo de combate para esta sessão
-	go runAutoHuntLoop(char.ID)
+	_ = timers.SetAfter(userID, autoHuntTimerKey, autoHuntCombatInterval)
 
 	modeLabel := skillModeLabel(cfg.Mode)
 	skillSummary := ""
@@ -531,7 +538,7 @@ func handleAutoHuntStart(chatID int64, msgID int, userID int64, mapID string, cf
 			"❤️ HP: *%d*/%d | 🔵 MP: *%d*/%d\n"+
 			"⭐ Nível: *%d* | 💎 Diamantes: *%d*\n\n"+
 			"_Seu personagem está caçando continuamente. "+
-			"Abra o relatório para acompanhar evolução em tempo real._",
+			"O progresso é processado por ciclos quando você abrir o relatório._",
 			m.Emoji, m.Name, modeLabel, skillSummary, potionSummary,
 			char.Energy, char.EnergyMax, char.HP, char.HPMax, char.MP, char.MPMax,
 			char.Level, char.Diamonds),
@@ -546,7 +553,9 @@ func handleAutoHuntStop(chatID int64, msgID int, userID int64) {
 	if char == nil {
 		return
 	}
+	_, _ = processAutoHuntOffline(char.ID, autoHuntStopCatchupCycles)
 	database.StopAutoHunt(char.ID, "stopped")
+	_ = timers.Clear(userID, autoHuntTimerKey)
 	char.State = "idle"
 	database.SaveCharacter(char)
 	editMainMenuPhoto(chatID, msgID, userID)
@@ -554,6 +563,11 @@ func handleAutoHuntStop(chatID int64, msgID int, userID int64) {
 
 func handleAutoHuntReport(chatID int64, msgID int, userID int64) {
 	char, _ := database.GetCharacter(userID)
+	if char == nil {
+		return
+	}
+	_, _ = processAutoHuntOffline(char.ID, autoHuntReportCycles)
+	char, _ = database.GetCharacter(userID)
 	if char == nil {
 		return
 	}
@@ -612,45 +626,28 @@ func handleAutoHuntReport(chatID int64, msgID int, userID int64) {
 // AUTO HUNT BACKGROUND WORKER
 // =============================================
 
-const autoHuntCombatDelay = 3 * time.Second // delay entre combates dentro da sessão
+const (
+	autoHuntCombatInterval    = 60 * time.Second
+	autoHuntRefreshCycles     = 30
+	autoHuntReportCycles      = 180
+	autoHuntStopCatchupCycles = 180
+	autoHuntTimerKey          = "auto_hunt_next_cycle"
+)
+
+var autoHuntService = services.NewAutoHuntService(autoHuntCombatInterval)
 
 func StartAutoHuntWorker() {
-	// Na inicialização, retoma sessões que estavam rodando antes do restart
-	go func() {
-		time.Sleep(5 * time.Second) // aguarda o bot inicializar completamente
-		sessions, err := database.GetRunningAutoHunts()
-		if err != nil {
-			log.Printf("[AutoHunt] Error fetching sessions on startup: %v", err)
-			return
-		}
-		log.Printf("🏹 Auto hunt worker started — retomando %d sessão(ões) ativa(s)", len(sessions))
-		for _, s := range sessions {
-			go runAutoHuntLoop(s.CharacterID)
-		}
-	}()
+	log.Println("🏹 Auto hunt offline mode enabled (worker disabled)")
 }
 
-// runAutoHuntLoop roda a caça automática de um personagem em loop contínuo.
-// Uma goroutine por sessão. Para quando a sessão for encerrada (energia, morte, stop manual).
-func runAutoHuntLoop(charID int) {
-	log.Printf("[AutoHunt] Loop started for charID=%d", charID)
-	for {
-		// Verifica se a sessão ainda está ativa
-		session, err := database.GetAutoHuntSession(charID)
-		if err != nil || session == nil || session.Status != "running" {
-			log.Printf("[AutoHunt] Loop ended for charID=%d (session stopped)", charID)
-			return
-		}
-
-		// Executa um combate e verifica se deve continuar
-		shouldContinue := doAutoHuntCombat(charID, session)
-		if !shouldContinue {
-			return
-		}
-
-		// Delay entre combates
-		time.Sleep(autoHuntCombatDelay)
-	}
+// processAutoHuntOffline aplica ciclos pendentes com base no tempo desde o último tick.
+func processAutoHuntOffline(charID int, maxCycles int) (int, error) {
+	return autoHuntService.ProcessOffline(
+		charID,
+		maxCycles,
+		database.GetAutoHuntSession,
+		doAutoHuntCombat,
+	)
 }
 
 // doAutoHuntCombat executa um único combate da caça automática.
@@ -665,6 +662,7 @@ func doAutoHuntCombat(charID int, session *database.AutoHuntSession) bool {
 
 	if !database.IsVIP(playerID) {
 		database.StopAutoHunt(charID, "stopped")
+		_ = timers.Clear(playerID, autoHuntTimerKey)
 		char.State = "idle"
 		database.SaveCharacter(char)
 		notifyUser(playerID, "⚠️ *Caça automática pausada*\n\nSeu VIP expirou. Renove para continuar.")
@@ -675,6 +673,7 @@ func doAutoHuntCombat(charID int, session *database.AutoHuntSession) bool {
 
 	if !game.ConsumeAttackEnergy(char) {
 		database.StopAutoHunt(charID, "out_of_energy")
+		_ = timers.Clear(playerID, autoHuntTimerKey)
 		char.State = "idle"
 		database.SaveCharacter(char)
 		// Busca totais atualizados para o relatório
@@ -699,6 +698,7 @@ func doAutoHuntCombat(charID int, session *database.AutoHuntSession) bool {
 	monsters := game.GetMonstersForMap(session.MapID)
 	if len(monsters) == 0 {
 		database.StopAutoHunt(charID, "stopped")
+		_ = timers.Clear(playerID, autoHuntTimerKey)
 		return false
 	}
 	monster := monsters[rand.Intn(len(monsters))]
@@ -864,6 +864,7 @@ func doAutoHuntCombat(charID int, session *database.AutoHuntSession) bool {
 		xpLost, goldLost := game.ApplyDeathPenalty(char)
 		database.SaveCharacter(char)
 		database.StopAutoHunt(charID, "stopped")
+		_ = timers.Clear(playerID, autoHuntTimerKey)
 		char.State = "idle"
 		database.SaveCharacter(char)
 		s, _ := database.GetAutoHuntSession(charID)
@@ -911,6 +912,7 @@ func doAutoHuntCombat(charID int, session *database.AutoHuntSession) bool {
 	database.SaveCharacter(char)
 	database.UpdateAutoHuntTick(session.ID, xpGain, goldGain)
 	database.LogCombat(char.ID, monster.ID, "win", xpGain, goldGain)
+	_ = timers.SetAfter(playerID, autoHuntTimerKey, autoHuntCombatInterval)
 
 	log.Printf("[AutoHunt] combat charID=%d monster=%s(CA:%d) rounds=%d hits=%d misses=%d crits=%d xp=%d gold=%d hp=%d/%d mp=%d/%d",
 		char.ID, monster.ID, monster.CA, rounds, hits, misses, crits, xpGain, goldGain, char.HP, char.HPMax, char.MP, char.MPMax)
@@ -1338,7 +1340,7 @@ func handleVIPPurchase(chatID int64, msgID int, userID int64, plan string) {
 	database.SaveCharacter(char)
 	editPhoto(chatID, msgID, "menu",
 		fmt.Sprintf("👑 *VIP Ativado!*\n\n*Plano:* %s\n*Custo:* %d 💎\n\n"+
-			"⚡ Nova energia máxima: *%d*\n⏱️ Recarga: *8 minutos*\n"+
+			"⚡ Nova energia máxima: *%d*\n⏱️ Recarga: *5 minutos*\n"+
 			"🏹 Caça automática com habilidades e poções desbloqueada!",
 			labels[plan], cost, newMax),
 		&tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{
