@@ -65,6 +65,7 @@ DUNGEON_PROCEDURAL_ENABLED=false     # true=gera dungeons procedurais (5-10 sala
 ABACATEPAY_WEBHOOK_SECRET=change-me  # valida header X-AbacatePay-Secret (opcional)
 ECONOMY_DYNAMIC_PRICING=false        # preço dinâmico progressivo na loja NPC
 TELEMETRY_ENABLED=false              # analytics opcionais (login/dungeon/forge/pix)
+ENERGY_FIXED_CAP=false               # força cap fixo 100/200 no worker central de energia
 ```
 
 **Importante:** nunca faça commit do arquivo `.env`. Se você chegou a compartilhar tokens reais (Telegram/AbacatePay), faça **rotação** imediata no painel correspondente.
@@ -73,7 +74,7 @@ TELEMETRY_ENABLED=false              # analytics opcionais (login/dungeon/forge/
 
 ## Banco de dados
 
-O projeto usa **migrações incrementais** em `migrations/001_init.sql` até `migrations/019_perf_indexes_analytics.sql`.
+O projeto usa **migrações incrementais** em `migrations/001_init.sql` até `migrations/021_energy_tick_index.sql`.
 
 Para subir do zero (manual), aplique os `.sql` em ordem:
 
@@ -88,10 +89,12 @@ Evoluções recentes de schema:
 - `013_backfill_equipped_slots.sql`: normalização/backfill de slots equipados.
 - `014_shield_offhand_slot.sql`: cria e ajusta o slot dedicado `offhand` (escudo).
 - `015_player_items.sql`: adiciona instâncias de item por personagem para progressão de forja (`upgrade_level`, quebra e equip por instância).
-- `016_energy_timestamp.sql`: energia com cálculo por timestamp (`last_energy_update`) sem worker de regen.
+- `016_energy_timestamp.sql`: energia com cálculo por timestamp (`last_energy_update`) com base para regen offline.
 - `017_player_timers.sql`: timers genéricos por jogador (`player_timers`) para cooldowns/sistemas.
 - `018_economy_usage_stats.sql`: estatísticas de compra para economia dinâmica (`item_usage_stats`).
 - `019_perf_indexes_analytics.sql`: índices de performance + tabela opcional de analytics (`analytics_events`).
+- `020_gm_action_logs.sql`: trilha de auditoria de ações GM (`gm_action_logs`).
+- `021_energy_tick_index.sql`: índice parcial para tick de energia por timestamp (`idx_characters_energy_tick`).
 
 ## Atualizações recentes
 
@@ -148,6 +151,7 @@ Evoluções recentes de schema:
 | `player_timers` | Timers/cooldowns genéricos por jogador |
 | `item_usage_stats` | Estatística de uso para precificação dinâmica |
 | `analytics_events` | Eventos opcionais de telemetria |
+| `gm_action_logs` | Auditoria de ações administrativas (GM) |
 | `diamond_log` | Log de transações de diamantes |
 | `combat_log` | Histórico de combates |
 | `daily_bonus` | Controle de bônus diário |
@@ -205,6 +209,8 @@ tormenta-bot/
 │   │   └── crafting.go         # Receitas e consumo de materiais
 │   ├── dungeon/
 │   │   └── generator.go        # Geração procedural de salas (5-10)
+│   ├── energy/
+│   │   └── service.go          # Tick central de regeneração por timestamp (batch)
 │   ├── systems/
 │   │   ├── workers/
 │   │   │   └── manager.go      # Workers centralizados de manutenção/pix/eventos
@@ -224,6 +230,8 @@ tormenta-bot/
 │   │   └── config_cache.go     # Cache opcional de loja/dungeon config
 │   ├── worker/
 │   │   └── manager.go          # Camada compatível para workers centralizados
+│   ├── gmtools/
+│   │   └── service.go          # Ferramentas administrativas (tp, energia, reset dungeon, spawn)
 │   ├── menu/
 │   │   ├── engine.go           # Helpers de botões/linhas/teclados inline
 │   │   ├── main_menu.go        # Menu principal
@@ -265,7 +273,9 @@ tormenta-bot/
 │   ├── 016_energy_timestamp.sql
 │   ├── 017_player_timers.sql
 │   ├── 018_economy_usage_stats.sql
-│   └── 019_perf_indexes_analytics.sql
+│   ├── 019_perf_indexes_analytics.sql
+│   ├── 020_gm_action_logs.sql
+│   └── 021_energy_tick_index.sql
 ├── scripts/
 │   ├── update.ps1              # Atualização com backup (Windows)
 │   └── update.sh               # Atualização com backup (Linux/macOS)
@@ -329,7 +339,7 @@ Energia é o recurso central — toda ação consome 1⚡.
 | Andar em masmorra | 1⚡ |
 | Tick de caça automática | 1⚡ |
 
-**Regeneração passiva** — calculada automaticamente na próxima interação:
+**Regeneração passiva** — baseada em timestamp (`last_energy_update`) e consolidada por worker central em lote, mantendo compatibilidade com tick por interação:
 
 | Status | Máximo | Regeneração |
 |---|---|---|
@@ -459,6 +469,9 @@ Apenas usuários com ID listado em `GM_IDS` têm acesso. O comando `/gm` sem arg
 | `/gm gold <nome> <+N/-N>` | Adiciona ou remove ouro |
 | `/gm vip <nome> <dias>` | Concede VIP (`0` = permanente, `-1` = revogar) |
 | `/gm pix` | Lista pagamentos Pix recentes |
+
+Painel inline de GM também inclui ações rápidas por personagem: `+50 energia`, `teleporte`, `spawn item/material`, `reset de dungeon`, visualização de inventário/equipados e histórico econômico.
+Todas as ações administrativas relevantes são auditadas em `gm_action_logs`.
 
 ---
 

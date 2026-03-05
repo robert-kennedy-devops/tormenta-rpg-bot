@@ -12,6 +12,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/tormenta-bot/internal/database"
 	"github.com/tormenta-bot/internal/game"
+	"github.com/tormenta-bot/internal/gmtools"
 	menukit "github.com/tormenta-bot/internal/menu"
 )
 
@@ -29,6 +30,8 @@ var (
 	gmIDsRawLast string
 	gmIDsMu      sync.Mutex
 )
+
+var gmSvc = gmtools.New()
 
 func isGM(userID int64) bool {
 	raw := os.Getenv("GM_IDS")
@@ -50,6 +53,9 @@ func isGM(userID int64) bool {
 
 // gmLog sends an action log to GM_LOG_CHAT if configured.
 func gmLog(gmUserID int64, action string) {
+	_ = database.LogGMAction(gmUserID, 0, "generic", action)
+	log.Printf("[GM] %d → %s", gmUserID, action)
+
 	logChatStr := os.Getenv("GM_LOG_CHAT")
 	if logChatStr == "" {
 		return
@@ -63,7 +69,6 @@ func gmLog(gmUserID int64, action string) {
 	msg := tgbotapi.NewMessage(logChatID, text)
 	msg.ParseMode = "Markdown"
 	Bot.Send(msg)
-	log.Printf("[GM] %d → %s", gmUserID, action)
 }
 
 // ── Sessão GM (armazena estado entre callbacks) ───────────
@@ -323,6 +328,47 @@ func HandleGMCallback(cb *tgbotapi.CallbackQuery) bool {
 	case strings.HasPrefix(data, "gm_gpanel_"):
 		charID, _ := strconv.Atoi(strings.TrimPrefix(data, "gm_gpanel_"))
 		gmShowGoldPanel(chatID, msgID, charID)
+	case strings.HasPrefix(data, "gm_tp_"):
+		parts := strings.SplitN(strings.TrimPrefix(data, "gm_tp_"), "_", 2)
+		charID, _ := strconv.Atoi(parts[0])
+		mapID := ""
+		if len(parts) > 1 {
+			mapID = parts[1]
+		}
+		gmTeleport(chatID, msgID, gmID, charID, mapID)
+	case strings.HasPrefix(data, "gm_spawnitem_"):
+		parts := strings.SplitN(strings.TrimPrefix(data, "gm_spawnitem_"), "_", 2)
+		charID, _ := strconv.Atoi(parts[0])
+		itemID := ""
+		if len(parts) > 1 {
+			itemID = parts[1]
+		}
+		gmSpawn(chatID, msgID, gmID, charID, itemID, 1)
+	case strings.HasPrefix(data, "gm_spawnmat_"):
+		parts := strings.SplitN(strings.TrimPrefix(data, "gm_spawnmat_"), "_", 2)
+		charID, _ := strconv.Atoi(parts[0])
+		itemID := ""
+		if len(parts) > 1 {
+			itemID = parts[1]
+		}
+		gmSpawn(chatID, msgID, gmID, charID, itemID, 3)
+	case strings.HasPrefix(data, "gm_energy_"):
+		parts := strings.SplitN(strings.TrimPrefix(data, "gm_energy_"), "_", 2)
+		charID, _ := strconv.Atoi(parts[0])
+		amount, _ := strconv.Atoi(parts[1])
+		gmGiveEnergy(chatID, msgID, gmID, charID, amount)
+	case strings.HasPrefix(data, "gm_dreset_"):
+		charID, _ := strconv.Atoi(strings.TrimPrefix(data, "gm_dreset_"))
+		gmResetDungeon(chatID, msgID, gmID, charID)
+	case strings.HasPrefix(data, "gm_inv_"):
+		charID, _ := strconv.Atoi(strings.TrimPrefix(data, "gm_inv_"))
+		gmShowInventory(chatID, msgID, charID)
+	case strings.HasPrefix(data, "gm_eq_"):
+		charID, _ := strconv.Atoi(strings.TrimPrefix(data, "gm_eq_"))
+		gmShowEquipped(chatID, msgID, charID)
+	case strings.HasPrefix(data, "gm_econ_"):
+		charID, _ := strconv.Atoi(strings.TrimPrefix(data, "gm_econ_"))
+		gmShowEconomicHistory(chatID, msgID, charID)
 	}
 	return true
 }
@@ -529,6 +575,7 @@ func gmExecuteBan(chatID int64, msgID int, gmID int64, charID int, reason string
 	)
 
 	gmLog(gmID, fmt.Sprintf("BAN char=%d tg=%d name=%s reason=%s", charID, char.PlayerID, char.Name, reason))
+	_ = database.LogGMAction(gmID, charID, "ban", reason)
 
 	// Notify the banned player
 	notification := fmt.Sprintf(
@@ -569,6 +616,7 @@ func gmExecuteUnban(chatID int64, msgID int, gmID int64, charID int) {
 		}(),
 	)
 	gmLog(gmID, fmt.Sprintf("UNBAN char=%d tg=%d name=%s", charID, char.PlayerID, char.Name))
+	_ = database.LogGMAction(gmID, charID, "unban", "manual")
 	notifyPlayer(char.PlayerID, "✅ *Sua conta foi reativada!*\n\nBoas aventuras em Tormenta RPG! 🗡️")
 }
 
@@ -613,6 +661,7 @@ func gmDoAdjustDiamond(chatID int64, msgID int, gmID int64, charID int, delta in
 		sign = ""
 	}
 	gmLog(gmID, fmt.Sprintf("DIAMOND char=%d name=%s %s%d → %d", charID, char.Name, sign, delta, newVal))
+	_ = database.LogGMAction(gmID, charID, "diamond_adjust", fmt.Sprintf("delta=%d new=%d", delta, newVal))
 
 	// Reload and re-show panel
 	char.Diamonds = newVal
@@ -674,6 +723,7 @@ func gmDoAdjustGold(chatID int64, msgID int, gmID int64, charID int, delta int) 
 		sign = ""
 	}
 	gmLog(gmID, fmt.Sprintf("GOLD char=%d name=%s %s%d → %d", charID, char.Name, sign, delta, newVal))
+	_ = database.LogGMAction(gmID, charID, "gold_adjust", fmt.Sprintf("delta=%d new=%d", delta, newVal))
 
 	text := fmt.Sprintf(
 		"🪙 *Ajustar Ouro — %s*\n\n"+
@@ -1071,6 +1121,118 @@ func notifyPlayer(playerID int64, text string) {
 	if _, err := Bot.Send(msg); err != nil {
 		log.Printf("[GM] notifyPlayer %d: %v", playerID, err)
 	}
+}
+
+func gmTeleport(chatID int64, msgID int, gmID int64, charID int, mapID string) {
+	if err := gmSvc.Teleport(charID, mapID); err != nil {
+		editMsg(chatID, msgID, "❌ Teleporte falhou: "+err.Error(), &backKeyboard)
+		return
+	}
+	_ = database.LogGMAction(gmID, charID, "teleport", "map="+mapID)
+	gmShowPlayerPanel(chatID, msgID, gmID, charID)
+}
+
+func gmSpawn(chatID int64, msgID int, gmID int64, charID int, itemID string, qty int) {
+	if err := gmSvc.SpawnItem(charID, itemID, qty); err != nil {
+		editMsg(chatID, msgID, "❌ Spawn falhou: "+err.Error(), &backKeyboard)
+		return
+	}
+	_ = database.LogGMAction(gmID, charID, "spawn_item", fmt.Sprintf("item=%s qty=%d", itemID, qty))
+	gmShowPlayerPanel(chatID, msgID, gmID, charID)
+}
+
+func gmGiveEnergy(chatID int64, msgID int, gmID int64, charID int, amount int) {
+	if amount == 0 {
+		amount = 50
+	}
+	if err := gmSvc.AddEnergy(charID, amount); err != nil {
+		editMsg(chatID, msgID, "❌ Energia falhou: "+err.Error(), &backKeyboard)
+		return
+	}
+	_ = database.LogGMAction(gmID, charID, "energy_adjust", fmt.Sprintf("delta=%d", amount))
+	gmShowPlayerPanel(chatID, msgID, gmID, charID)
+}
+
+func gmResetDungeon(chatID int64, msgID int, gmID int64, charID int) {
+	if err := gmSvc.ResetDungeon(charID); err != nil {
+		editMsg(chatID, msgID, "❌ Reset dungeon falhou: "+err.Error(), &backKeyboard)
+		return
+	}
+	_ = database.LogGMAction(gmID, charID, "dungeon_reset", "manual")
+	gmShowPlayerPanel(chatID, msgID, gmID, charID)
+}
+
+func gmShowInventory(chatID int64, msgID int, charID int) {
+	char, _ := database.GetCharacterByID(charID)
+	if char == nil {
+		editMsg(chatID, msgID, "❌ Personagem não encontrado.", &backKeyboard)
+		return
+	}
+	inv, _ := database.GetInventory(charID)
+	text := fmt.Sprintf("🎒 *Inventário GM — %s*\n\n", escMd(char.Name))
+	if len(inv) == 0 {
+		text += "_Vazio_"
+	} else {
+		max := len(inv)
+		if max > 30 {
+			max = 30
+		}
+		for i := 0; i < max; i++ {
+			it := inv[i]
+			text += fmt.Sprintf("• `%s` x%d (%s)%s\n", it.ItemID, it.Quantity, it.ItemType, map[bool]string{true: " ✅"}[it.Equipped])
+		}
+		if len(inv) > max {
+			text += fmt.Sprintf("\n_... e mais %d item(ns)_", len(inv)-max)
+		}
+	}
+	kb := menukit.GMPlayerResult(charID)
+	editMsg(chatID, msgID, text, &kb)
+}
+
+func gmShowEquipped(chatID int64, msgID int, charID int) {
+	char, _ := database.GetCharacterByID(charID)
+	if char == nil {
+		editMsg(chatID, msgID, "❌ Personagem não encontrado.", &backKeyboard)
+		return
+	}
+	items, _ := database.GetEquippedItems(charID)
+	text := fmt.Sprintf("🛡️ *Equipados GM — %s*\n\n", escMd(char.Name))
+	if len(items) == 0 {
+		text += "_Nenhum item equipado_"
+	} else {
+		for _, it := range items {
+			slot := it.Slot
+			if slot == "" {
+				slot = it.ItemType
+			}
+			text += fmt.Sprintf("• `%s` [%s]\n", it.ItemID, slot)
+		}
+	}
+	kb := menukit.GMPlayerResult(charID)
+	editMsg(chatID, msgID, text, &kb)
+}
+
+func gmShowEconomicHistory(chatID int64, msgID int, charID int) {
+	char, _ := database.GetCharacterByID(charID)
+	if char == nil {
+		editMsg(chatID, msgID, "❌ Personagem não encontrado.", &backKeyboard)
+		return
+	}
+	history, _ := database.GetEconomicHistory(charID, 20)
+	text := fmt.Sprintf("📜 *Histórico Econômico — %s*\n\n", escMd(char.Name))
+	if len(history) == 0 {
+		text += "_Sem movimentações registradas_"
+	} else {
+		for _, h := range history {
+			sign := "+"
+			if h.Amount < 0 {
+				sign = ""
+			}
+			text += fmt.Sprintf("• %s%d 💎 — `%s` (%s)\n", sign, h.Amount, h.Reason, h.CreatedAt.Format("02/01 15:04"))
+		}
+	}
+	kb := menukit.GMPlayerResult(charID)
+	editMsg(chatID, msgID, text, &kb)
 }
 
 // escMd escapes Markdown special characters in user-provided strings.

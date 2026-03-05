@@ -14,6 +14,11 @@ func GMDashboard() tgbotapi.InlineKeyboardMarkup {
 func GMPlayerPanel(charID int, banLabel, banAction string) tgbotapi.InlineKeyboardMarkup {
 	return Keyboard(
 		Row(Btn("💎 Diamantes", fmt.Sprintf("gm_dpanel_%d", charID)), Btn("🪙 Ouro", fmt.Sprintf("gm_gpanel_%d", charID))),
+		Row(Btn("⚡ +50 Energia", fmt.Sprintf("gm_energy_%d_50", charID)), Btn("🗺️ Reset Dungeon", fmt.Sprintf("gm_dreset_%d", charID))),
+		Row(Btn("🧭 TP Vila", fmt.Sprintf("gm_tp_%d_village", charID)), Btn("🧭 TP Floresta", fmt.Sprintf("gm_tp_%d_dark_forest", charID))),
+		Row(Btn("🎁 Spawn Item", fmt.Sprintf("gm_spawnitem_%d_potion_small", charID)), Btn("🧱 Spawn Material", fmt.Sprintf("gm_spawnmat_%d_mat_forge_stone", charID))),
+		Row(Btn("🎒 Inventário", fmt.Sprintf("gm_inv_%d", charID)), Btn("🛡️ Equipados", fmt.Sprintf("gm_eq_%d", charID))),
+		Row(Btn("📜 Histórico Econ", fmt.Sprintf("gm_econ_%d", charID))),
 		Row(Btn(banLabel, banAction), Btn("📋 Info completo", fmt.Sprintf("gm_panel_%d", charID))),
 		Row(Btn("🔙 Painel GM", "gm_menu")),
 	)

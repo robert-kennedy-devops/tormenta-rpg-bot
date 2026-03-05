@@ -125,6 +125,7 @@ func Migrate() {
 		`CREATE INDEX IF NOT EXISTS idx_auto_hunt_char_status ON auto_hunt_sessions(character_id, status)`,
 		`CREATE INDEX IF NOT EXISTS idx_auto_hunt_last_tick ON auto_hunt_sessions(last_tick_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_dungeon_runs_state_started ON dungeon_runs(state, started_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_characters_energy_tick ON characters(last_energy_update) WHERE energy < energy_max`,
 		`CREATE TABLE IF NOT EXISTS analytics_events (
 			id BIGSERIAL PRIMARY KEY,
 			player_id BIGINT NOT NULL,
@@ -135,6 +136,16 @@ func Migrate() {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_analytics_event_created ON analytics_events(event, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_analytics_player_created ON analytics_events(player_id, created_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS gm_action_logs (
+			id BIGSERIAL PRIMARY KEY,
+			gm_player_id BIGINT NOT NULL,
+			target_character_id INT NOT NULL DEFAULT 0,
+			action VARCHAR(64) NOT NULL,
+			details TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_gm_action_logs_gm_created ON gm_action_logs(gm_player_id, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_gm_action_logs_target_created ON gm_action_logs(target_character_id, created_at DESC)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := DB.Exec(stmt); err != nil {
@@ -461,6 +472,56 @@ func SaveCharacterEnergy(charID int, energy int, energyMax int, regenAt time.Tim
 		WHERE id=$4
 	`, energy, energyMax, regenAt, charID)
 	return err
+}
+
+type EnergyTickCandidate struct {
+	CharacterID      int
+	Energy           int
+	EnergyMax        int
+	LastEnergyUpdate int64
+	IsVIP            bool
+}
+
+// GetEnergyTickCandidates returns characters that may recover energy.
+// VIP state is resolved from players so interval/cap can be applied without loading full character rows.
+func GetEnergyTickCandidates(limit int) ([]EnergyTickCandidate, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	rows, err := DB.Query(`
+		SELECT c.id, COALESCE(c.energy, 0), COALESCE(c.energy_max, 100),
+		       COALESCE(c.last_energy_update, EXTRACT(EPOCH FROM NOW())::BIGINT),
+		       COALESCE(p.is_vip, FALSE),
+		       p.vip_expires_at
+		FROM characters c
+		LEFT JOIN players p ON p.id = c.player_id
+		WHERE COALESCE(c.energy, 0) < COALESCE(c.energy_max, 100)
+		ORDER BY c.last_energy_update ASC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	now := time.Now()
+	out := make([]EnergyTickCandidate, 0, limit)
+	for rows.Next() {
+		var c EnergyTickCandidate
+		var vipExpiresAt sql.NullTime
+		if err := rows.Scan(&c.CharacterID, &c.Energy, &c.EnergyMax, &c.LastEnergyUpdate, &c.IsVIP, &vipExpiresAt); err != nil {
+			return nil, err
+		}
+		// Keep compatibility with existing VIP semantics: active if flag=true and not expired.
+		if c.IsVIP && vipExpiresAt.Valid && vipExpiresAt.Time.Before(now) {
+			c.IsVIP = false
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // GetCharactersNeedingEnergyTick returns characters that are not at full energy.
@@ -1531,6 +1592,55 @@ type PlayerRecord struct {
 	ID       int64
 	Username string
 	Banned   bool
+}
+
+func LogGMAction(gmPlayerID int64, targetCharacterID int, action, details string) error {
+	if action == "" {
+		return nil
+	}
+	_, err := DB.Exec(`
+		INSERT INTO gm_action_logs (gm_player_id, target_character_id, action, details)
+		VALUES ($1,$2,$3,$4)
+	`, gmPlayerID, targetCharacterID, action, details)
+	return err
+}
+
+type EconomicHistoryEntry struct {
+	Source    string
+	Amount    int
+	Reason    string
+	CreatedAt time.Time
+}
+
+// GetEconomicHistory returns a concise history from diamond_log (and future sources).
+func GetEconomicHistory(charID int, limit int) ([]EconomicHistoryEntry, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := DB.Query(`
+		SELECT amount, reason, created_at
+		FROM diamond_log
+		WHERE character_id=$1
+		ORDER BY created_at DESC
+		LIMIT $2
+	`, charID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []EconomicHistoryEntry
+	for rows.Next() {
+		var e EconomicHistoryEntry
+		e.Source = "diamond_log"
+		if err := rows.Scan(&e.Amount, &e.Reason, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func GetAllPlayers(limit int) ([]PlayerRecord, error) {

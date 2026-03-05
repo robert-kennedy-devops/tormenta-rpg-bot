@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/tormenta-bot/internal/database"
+	energysvc "github.com/tormenta-bot/internal/energy"
 	"github.com/tormenta-bot/internal/handlers"
 	"github.com/tormenta-bot/internal/services/payment"
 	"github.com/tormenta-bot/internal/systems/events"
@@ -13,12 +14,14 @@ import (
 type Manager struct {
 	payments *payment.Service
 	events   *events.Manager
+	energy   *energysvc.Service
 }
 
 func NewManager() *Manager {
 	return &Manager{
 		payments: payment.NewService(),
 		events:   events.Global,
+		energy:   energysvc.NewService(),
 	}
 }
 
@@ -54,6 +57,12 @@ func (m *Manager) energyWorker(interval time.Duration) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for range t.C {
+		n, err := m.energy.Tick(1000)
+		if err != nil {
+			log.Printf("[workers.energy] tick error: %v", err)
+		} else if n > 0 {
+			log.Printf("[workers.energy] regenerated players=%d", n)
+		}
 		if err := database.ClampCharacterEnergy(); err != nil {
 			log.Printf("[workers.energy] clamp error: %v", err)
 		}
