@@ -8,6 +8,10 @@ const (
 	MaterialArcaneEssence = "mat_arcane_essence"
 	MaterialMonsterShard  = "mat_monster_shard"
 	MaterialBlackMetal    = "mat_black_metal"
+	MaterialIronOre       = "mat_iron_ore"
+	MaterialSilverOre     = "mat_silver_ore"
+	MaterialGoldOre       = "mat_gold_ore"
+	MaterialMagicEssence  = "mat_magic_essence"
 )
 
 // MaterialTemplates are base material definitions for forge/crafting systems.
@@ -51,5 +55,37 @@ var MaterialTemplates = map[string]ItemTemplate{
 		Emoji:       "⛓️",
 		Type:        "material",
 		Rarity:      models.RarityEpic,
+	},
+	MaterialIronOre: {
+		ID:          MaterialIronOre,
+		Name:        "Minério de Ferro",
+		Description: "Minério base para reforços iniciais.",
+		Emoji:       "🪙",
+		Type:        "material",
+		Rarity:      models.RarityCommon,
+	},
+	MaterialSilverOre: {
+		ID:          MaterialSilverOre,
+		Name:        "Minério de Prata",
+		Description: "Minério refinado para reforços intermediários.",
+		Emoji:       "🥈",
+		Type:        "material",
+		Rarity:      models.RarityUncommon,
+	},
+	MaterialGoldOre: {
+		ID:          MaterialGoldOre,
+		Name:        "Minério de Ouro",
+		Description: "Minério raro para reforços avançados.",
+		Emoji:       "🥇",
+		Type:        "material",
+		Rarity:      models.RarityRare,
+	},
+	MaterialMagicEssence: {
+		ID:          MaterialMagicEssence,
+		Name:        "Essência Mágica",
+		Description: "Energia mística usada nas forjas de alto nível.",
+		Emoji:       "🔮",
+		Type:        "material",
+		Rarity:      models.RarityRare,
 	},
 }

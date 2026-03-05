@@ -54,6 +54,46 @@ func init() {
 		Price:       0,
 		SellPrice:   90,
 	}
+	Items["mat_iron_ore"] = models.Item{
+		ID:          "mat_iron_ore",
+		Name:        "Minério de Ferro",
+		Description: "Minério comum usado para reforços básicos.",
+		Emoji:       "🪙",
+		Type:        "material",
+		Rarity:      models.RarityCommon,
+		Price:       0,
+		SellPrice:   10,
+	}
+	Items["mat_silver_ore"] = models.Item{
+		ID:          "mat_silver_ore",
+		Name:        "Minério de Prata",
+		Description: "Minério refinado para reforços intermediários.",
+		Emoji:       "🥈",
+		Type:        "material",
+		Rarity:      models.RarityUncommon,
+		Price:       0,
+		SellPrice:   22,
+	}
+	Items["mat_gold_ore"] = models.Item{
+		ID:          "mat_gold_ore",
+		Name:        "Minério de Ouro",
+		Description: "Minério raro para reforços avançados.",
+		Emoji:       "🥇",
+		Type:        "material",
+		Rarity:      models.RarityRare,
+		Price:       0,
+		SellPrice:   40,
+	}
+	Items["mat_magic_essence"] = models.Item{
+		ID:          "mat_magic_essence",
+		Name:        "Essência Mágica",
+		Description: "Energia mística concentrada para forjas potentes.",
+		Emoji:       "🔮",
+		Type:        "material",
+		Rarity:      models.RarityRare,
+		Price:       0,
+		SellPrice:   55,
+	}
 
 	// Resultado inicial de crafting
 	Items["sword_black"] = models.Item{

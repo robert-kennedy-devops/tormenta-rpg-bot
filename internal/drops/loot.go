@@ -17,7 +17,7 @@ var modeMultiplier = map[Mode]float64{
 	ModeNormal:   1.0,
 	ModeDungeon:  1.0,
 	ModeExplore:  1.0,
-	ModeAutoHunt: 0.30, // ex.: 5% -> 1.5%
+	ModeAutoHunt: 0.30, // ex.: 3.33% -> ~1.0%
 }
 
 type Entry struct {

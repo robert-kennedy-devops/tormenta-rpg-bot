@@ -65,7 +65,8 @@ DUNGEON_PROCEDURAL_ENABLED=false     # true=gera dungeons procedurais (5-10 sala
 ABACATEPAY_WEBHOOK_SECRET=change-me  # valida header X-AbacatePay-Secret (opcional)
 ECONOMY_DYNAMIC_PRICING=false        # preço dinâmico progressivo na loja NPC
 TELEMETRY_ENABLED=false              # analytics opcionais (login/dungeon/forge/pix)
-ENERGY_FIXED_CAP=false               # força cap fixo 100/200 no worker central de energia
+ENERGY_FIXED_CAP=true                # default true: cap fixo 100/200 no worker central de energia
+FORGE_PROFILE=legacy10               # legacy10 (atual) | classic5 (+1..+5 com chances MMORPG)
 ```
 
 **Importante:** nunca faça commit do arquivo `.env`. Se você chegou a compartilhar tokens reais (Telegram/AbacatePay), faça **rotação** imediata no painel correspondente.
@@ -432,6 +433,9 @@ Exemplo:
 
 - Drops usam loot tables por contexto (`normal`, `dungeon`, `explore`, `auto_hunt`).
 - Auto-caça aplica multiplicador reduzido para manter balanceamento de economia.
+- Perfil de forja configurável por ambiente:
+  - `legacy10`: +1..+10 (compatibilidade atual)
+  - `classic5`: +1..+5 com chances 100/90/70/50/30 e materiais de minério/essência mágica
 - Base para exploração aleatória pronta com eventos:
   - monstro
   - tesouro

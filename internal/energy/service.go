@@ -65,5 +65,9 @@ func (s *Service) Tick(limit int) (int, error) {
 
 func energyFixedCapEnabled() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("ENERGY_FIXED_CAP")))
+	// Default ON to keep parity with game energy model (100 normal / 200 VIP).
+	if v == "" {
+		return true
+	}
 	return v == "1" || v == "true" || v == "yes" || v == "on"
 }

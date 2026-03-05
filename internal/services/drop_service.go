@@ -50,7 +50,9 @@ func (s *DropService) tableKey(monster *models.Monster, mode drops.Mode) string 
 	switch mode {
 	case drops.ModeDungeon:
 		return "dungeon_generic"
-	case drops.ModeExplore, drops.ModeNormal, drops.ModeAutoHunt:
+	case drops.ModeAutoHunt:
+		return "auto_generic"
+	case drops.ModeExplore, drops.ModeNormal:
 		return "explore_generic"
 	default:
 		return "explore_generic"

@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"fmt"
-	"math/rand"
 	"sort"
 	"strings"
 
@@ -11,9 +10,11 @@ import (
 	"github.com/tormenta-bot/internal/database"
 	"github.com/tormenta-bot/internal/forge"
 	"github.com/tormenta-bot/internal/game"
-	"github.com/tormenta-bot/internal/items"
+	"github.com/tormenta-bot/internal/services"
 	"github.com/tormenta-bot/internal/telemetry"
 )
+
+var forgeService = services.NewForgeService()
 
 func showForgeMenu(chatID int64, msgID int, userID int64) {
 	char, _ := database.GetCharacter(userID)
@@ -22,7 +23,7 @@ func showForgeMenu(chatID int64, msgID int, userID int64) {
 	}
 	inv, _ := database.GetInventory(char.ID)
 
-	caption := "🔨 *Forja de Equipamentos*\n\nSelecione um equipamento para aprimorar (+1 a +10):"
+	caption := fmt.Sprintf("🔨 *Forja de Equipamentos*\n\nSelecione um equipamento para aprimorar (+1 a +%d):", forgeService.MaxLevel())
 	rows := make([][]tgbotapi.InlineKeyboardButton, 0, 12)
 
 	for _, it := range inv {
@@ -82,11 +83,11 @@ func showForgeItem(chatID int64, msgID int, userID int64, itemID string) {
 	if progress != nil {
 		currentLevel = progress.UpgradeLevel
 	}
-	canAttempt := forge.CanAttempt(currentLevel)
+	canAttempt := forgeService.CanAttempt(currentLevel)
 	target := currentLevel + 1
-	chance, _ := forge.SuccessChance(currentLevel)
+	chance, _ := forgeService.SuccessChance(currentLevel)
 
-	materialID, materialQty := forgeCostForTarget(target)
+	materialID, materialQty := forgeService.MaterialCostForTarget(target)
 	materialName := materialID
 	materialEmoji := "🧱"
 	if m, ok := game.Items[materialID]; ok {
@@ -135,20 +136,20 @@ func handleForgeTry(chatID int64, msgID int, userID int64, itemID string) {
 		return
 	}
 
-	if !forge.CanAttempt(progress.UpgradeLevel) {
+	if !forgeService.CanAttempt(progress.UpgradeLevel) {
 		showForgeItem(chatID, msgID, userID, itemID)
 		return
 	}
 
 	target := progress.UpgradeLevel + 1
-	materialID, materialQty := forgeCostForTarget(target)
+	materialID, materialQty := forgeService.MaterialCostForTarget(target)
 	if database.GetItemCount(char.ID, materialID) < materialQty {
 		showForgeItem(chatID, msgID, userID, itemID)
 		return
 	}
 	_ = database.RemoveItem(char.ID, materialID, materialQty)
 
-	out, err := forge.Attempt(progress.UpgradeLevel, rand.Float64(), rand.Float64())
+	out, err := forgeService.AttemptRandom(progress.UpgradeLevel)
 	if err != nil {
 		editPhoto(chatID, msgID, "shop", "❌ Erro na forja.", bkp("menu_forge"))
 		return
@@ -192,17 +193,6 @@ func handleForgeTry(chatID int64, msgID int, userID int64, itemID string) {
 		editPhoto(chatID, msgID, "shop",
 			fmt.Sprintf("⚠️ Forja falhou.\n\n%s *%s* permanece em *+%d*.", item.Emoji, item.Name, out.NewLevel),
 			bkp("menu_forge"))
-	}
-}
-
-func forgeCostForTarget(target int) (string, int) {
-	switch {
-	case target <= 5:
-		return items.MaterialForgeStone, 1
-	case target <= 8:
-		return items.MaterialRefinedStone, 1
-	default:
-		return items.MaterialArcaneEssence, 1
 	}
 }
 

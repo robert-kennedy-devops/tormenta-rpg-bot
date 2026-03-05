@@ -26,7 +26,7 @@ func NewManager() *Manager {
 }
 
 func (m *Manager) Start(enablePixPolling bool) {
-	go m.energyWorker(2 * time.Minute)
+	go m.energyWorker(1 * time.Minute)
 	go m.autoHuntWorker(1 * time.Minute)
 	go m.dungeonCleanupWorker(15 * time.Minute)
 	go m.auctionCleanupWorker(20 * time.Minute)
