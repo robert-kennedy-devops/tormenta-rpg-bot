@@ -108,6 +108,12 @@ func Migrate() {
 			PRIMARY KEY (player_id, key)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_player_timers_end_time ON player_timers(end_time)`,
+		`CREATE TABLE IF NOT EXISTS item_usage_stats (
+			item_id TEXT PRIMARY KEY,
+			purchase_count BIGINT NOT NULL DEFAULT 0,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_item_usage_updated_at ON item_usage_stats(updated_at)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := DB.Exec(stmt); err != nil {
@@ -1056,6 +1062,57 @@ func GetPlayerRank(charID int) (int, int, error) {
 		return 0, 0, nil
 	}
 	return position, score, err
+}
+
+// ClampCharacterEnergy enforces persisted energy bounds in bulk.
+func ClampCharacterEnergy() error {
+	_, err := DB.Exec(`
+		UPDATE characters
+		SET energy = LEAST(GREATEST(COALESCE(energy,0), 0), COALESCE(energy_max,100))
+		WHERE COALESCE(energy,0) < 0 OR COALESCE(energy,0) > COALESCE(energy_max,100)
+	`)
+	return err
+}
+
+// CleanupExpiredDungeonRuns marks active runs older than ttlHours as expired.
+func CleanupExpiredDungeonRuns(ttlHours int) (int64, error) {
+	if ttlHours <= 0 {
+		ttlHours = 1
+	}
+	res, err := DB.Exec(`
+		UPDATE dungeon_runs
+		SET state='expired', finished_at=NOW()
+		WHERE state='active' AND started_at < NOW() - ($1::text || ' hours')::interval
+	`, ttlHours)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+func IncrementItemUsage(itemID string, qty int) error {
+	if itemID == "" || qty <= 0 {
+		return nil
+	}
+	_, err := DB.Exec(`
+		INSERT INTO item_usage_stats (item_id, purchase_count, updated_at)
+		VALUES ($1,$2,NOW())
+		ON CONFLICT (item_id) DO UPDATE
+		SET purchase_count=item_usage_stats.purchase_count + EXCLUDED.purchase_count,
+		    updated_at=NOW()
+	`, itemID, qty)
+	return err
+}
+
+func GetItemUsage(itemID string) (int64, error) {
+	var c int64
+	err := DB.QueryRow(`
+		SELECT COALESCE(purchase_count,0) FROM item_usage_stats WHERE item_id=$1
+	`, itemID).Scan(&c)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return c, err
 }
 
 // =============================================

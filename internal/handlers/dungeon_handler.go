@@ -320,6 +320,10 @@ func handleDungeonFight(chatID int64, msgID int, userID int64) {
 	}
 
 	// Start turn-based combat — same engine as Explore
+	if !stateGuard.IsValid(char.State, "dungeon_combat") {
+		renderDungeonFloor(chatID, msgID, char, run, &d, "❌ Estado inválido para combate de masmorra.\n")
+		return
+	}
 	char.State = "dungeon_combat"
 	char.CombatMonsterID = monster.ID
 	char.CombatMonsterHP = monster.HP

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"log"
@@ -15,6 +16,7 @@ import (
 	botruntime "github.com/tormenta-bot/internal/bot"
 	"github.com/tormenta-bot/internal/database"
 	"github.com/tormenta-bot/internal/handlers"
+	"github.com/tormenta-bot/internal/systems/workers"
 )
 
 func main() {
@@ -70,13 +72,12 @@ func main() {
 	bot.Debug = false
 	log.Printf("\u2705 Bot @%s started | Images: %s", bot.Self.UserName, assetsDir)
 
-	// Start Pix polling goroutine (polls AbacatePay every 15s)
-	if os.Getenv("ABACATEPAY_TOKEN") != "" {
-		handlers.StartPixPolling()
-		log.Println("\U0001f4b3 AbacatePay Pix polling started")
-	}
+	// Centralized background workers (pix, cleanup, events, energy clamp)
+	wm := workers.NewManager()
+	wm.Start(os.Getenv("ABACATEPAY_TOKEN") != "")
+	log.Println("🧰 Central worker manager started")
 
-	// Start VIP auto hunt worker (ticks every 5 minutes)
+	// Kept for backward compatibility (auto-hunt is offline/timestamp based now)
 	handlers.StartAutoHuntWorker()
 
 	// Start HTTP server for Mercado Pago webhooks (optional, but recommended)
@@ -157,6 +158,15 @@ func handleAbacateWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer r.Body.Close()
+
+	if secret := os.Getenv("ABACATEPAY_WEBHOOK_SECRET"); secret != "" {
+		got := r.Header.Get("X-AbacatePay-Secret")
+		if subtle.ConstantTimeCompare([]byte(got), []byte(secret)) != 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte(`{"status":"unauthorized"}`))
+			return
+		}
+	}
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, 64*1024))
 	if err != nil {

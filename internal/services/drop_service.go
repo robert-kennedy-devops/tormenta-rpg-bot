@@ -1,8 +1,11 @@
 package services
 
 import (
+	"time"
+
 	"github.com/tormenta-bot/internal/drops"
 	"github.com/tormenta-bot/internal/models"
+	"github.com/tormenta-bot/internal/systems/events"
 )
 
 type DropService struct {
@@ -25,6 +28,17 @@ func (s *DropService) RollMaterialDrops(monster *models.Monster, mode drops.Mode
 	table, ok := s.registry.Get(tableKey)
 	if !ok {
 		return nil
+	}
+	ev := events.Global.Active(time.Time{})
+	m := events.DropRateMultiplier(ev)
+	if m != 1.0 {
+		scaled := table
+		scaled.Entries = make([]drops.Entry, 0, len(table.Entries))
+		for _, e := range table.Entries {
+			e.BaseChance *= m
+			scaled.Entries = append(scaled.Entries, e)
+		}
+		table = scaled
 	}
 	return drops.Roll(table, mode, nil)
 }

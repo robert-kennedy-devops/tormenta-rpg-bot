@@ -485,6 +485,10 @@ func handleAutoHuntStart(chatID int64, msgID int, userID int64, mapID string, cf
 		editPhoto(chatID, msgID, "menu", "❌ Termine o combate atual antes de iniciar a caça automática.", bkp("menu_vip"))
 		return
 	}
+	if !stateGuard.IsValid(char.State, "auto_hunt") {
+		editPhoto(chatID, msgID, "menu", "❌ Estado inválido para iniciar auto-caça.", bkp("menu_vip"))
+		return
+	}
 	if char.Energy < game.EnergyCombatEnter {
 		editPhoto(chatID, msgID, "menu",
 			fmt.Sprintf("❌ *Energia insuficiente!*\n\n⚡ *%d*/%d — precisa *%d* ⚡", char.Energy, char.EnergyMax, game.EnergyCombatEnter),
@@ -556,6 +560,10 @@ func handleAutoHuntStop(chatID int64, msgID int, userID int64) {
 	_, _ = processAutoHuntOffline(char.ID, autoHuntStopCatchupCycles)
 	database.StopAutoHunt(char.ID, "stopped")
 	_ = timers.Clear(userID, autoHuntTimerKey)
+	if !stateGuard.IsValid(char.State, "idle") {
+		editMainMenuPhoto(chatID, msgID, userID)
+		return
+	}
 	char.State = "idle"
 	database.SaveCharacter(char)
 	editMainMenuPhoto(chatID, msgID, userID)

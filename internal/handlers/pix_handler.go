@@ -11,7 +11,10 @@ import (
 	"github.com/tormenta-bot/internal/database"
 	"github.com/tormenta-bot/internal/game"
 	menukit "github.com/tormenta-bot/internal/menu"
+	"github.com/tormenta-bot/internal/services/payment"
 )
+
+var pixPaymentService = payment.NewService()
 
 // =============================================
 // LOJA DE DIAMANTES (tela inicial)
@@ -193,11 +196,10 @@ func handlePixCheck(chatID int64, msgID int, userID int64) {
 			continue
 		}
 		if status == "approved" {
-			charID, diamonds, err2 := database.ConfirmPixPaymentByTxID(p.TxID)
-			if err2 == nil && diamonds > 0 {
-				credited += diamonds
-				database.LogDiamond(charID, diamonds, "pix_abacatepay")
-				log.Printf("[PIX] Credited %d diamonds to charID %d via check (txID=%s)", diamonds, charID, p.TxID)
+			res, err2 := pixPaymentService.ConfirmByTxID(p.TxID, "check")
+			if err2 == nil && res.Diamonds > 0 {
+				credited += res.Diamonds
+				log.Printf("[PIX] Credited %d diamonds to charID %d via check (txID=%s)", res.Diamonds, res.CharacterID, p.TxID)
 			}
 		}
 	}
@@ -267,27 +269,21 @@ func handlePixDevConfirm(chatID int64, msgID int, mpIDStr string) {
 
 // HandleAbacateWebhookNotification processa webhook do AbacatePay (pix.qrcode.paid).
 func HandleAbacateWebhookNotification(abacateID string) (playerID int64, diamonds int, err error) {
-	charID, diamonds, err := database.ConfirmPixPaymentByTxID(abacateID)
-	if err != nil || diamonds == 0 {
-		return 0, diamonds, err
+	res, err := pixPaymentService.ConfirmByTxID(abacateID, "webhook")
+	if err != nil {
+		return 0, 0, err
 	}
-	database.LogDiamond(charID, diamonds, "pix_abacatepay_webhook")
+	if res.Diamonds == 0 {
+		return res.PlayerID, 0, nil
+	}
 
 	// Notify GM about the payment
 	go func() {
 		if rec, err := database.GetPixPayment(abacateID); err == nil && rec != nil {
-			NotifyGMPixPaid(charID, diamonds, rec.PackageID, rec.AmountBRL)
+			NotifyGMPixPaid(res.CharacterID, res.Diamonds, rec.PackageID, rec.AmountBRL)
 		}
 	}()
-
-	var pid int64
-	database.DB.QueryRow(`
-		SELECT p.id FROM players p
-		JOIN characters c ON c.player_id = p.id
-		WHERE c.id=$1
-	`, charID).Scan(&pid)
-
-	return pid, diamonds, nil
+	return res.PlayerID, res.Diamonds, nil
 }
 
 // HandleMPWebhookNotification mantido por compatibilidade.
@@ -327,18 +323,25 @@ func pollPendingPixPayments() {
 		if status != "approved" {
 			continue
 		}
-		charID, diamonds, err := database.ConfirmPixPaymentByTxID(p.TxID)
-		if err != nil || diamonds == 0 {
+		res, err := pixPaymentService.ConfirmByTxID(p.TxID, "poll")
+		if err != nil || res.Diamonds == 0 {
 			continue
 		}
-		database.LogDiamond(charID, diamonds, "pix_abacatepay_poll")
-		log.Printf("[PIX] Poll confirmed %d diamonds for charID %d (txID=%s)", diamonds, charID, p.TxID)
+		log.Printf("[PIX] Poll confirmed %d diamonds for charID %d (txID=%s)", res.Diamonds, res.CharacterID, p.TxID)
 
 		// Notify player via Telegram
-		notifyPixConfirmed(charID, diamonds, p.PackageID)
+		notifyPixConfirmed(res.CharacterID, res.Diamonds, p.PackageID)
 		// Notify GM
-		NotifyGMPixPaid(charID, diamonds, p.PackageID, p.AmountBRL)
+		NotifyGMPixPaid(res.CharacterID, res.Diamonds, p.PackageID, p.AmountBRL)
 	}
+}
+
+func CheckAbacateStatusForWorker(txid string) (string, error) {
+	return game.CheckAbacatePayStatus(txid)
+}
+
+func NotifyPixConfirmedWorker(charID, diamonds int, packageID string) {
+	notifyPixConfirmed(charID, diamonds, packageID)
 }
 
 func notifyPixConfirmed(charID, diamonds int, packageID string) {

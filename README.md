@@ -62,6 +62,8 @@ MP_WEBHOOK_PORT=8080                 # Porta HTTP para webhooks (padrão: 8080)
 GM_LOG_CHAT=-100123456789            # Grupo para logs de ações GM
 ASSETS_DIR=./assets/images           # Diretório de imagens geradas
 DUNGEON_PROCEDURAL_ENABLED=false     # true=gera dungeons procedurais (5-10 salas)
+ABACATEPAY_WEBHOOK_SECRET=change-me  # valida header X-AbacatePay-Secret (opcional)
+ECONOMY_DYNAMIC_PRICING=false        # preço dinâmico progressivo na loja NPC
 ```
 
 **Importante:** nunca faça commit do arquivo `.env`. Se você chegou a compartilhar tokens reais (Telegram/AbacatePay), faça **rotação** imediata no painel correspondente.
@@ -70,7 +72,7 @@ DUNGEON_PROCEDURAL_ENABLED=false     # true=gera dungeons procedurais (5-10 sala
 
 ## Banco de dados
 
-O projeto usa **migrações incrementais** em `migrations/001_init.sql` até `migrations/017_player_timers.sql`.
+O projeto usa **migrações incrementais** em `migrations/001_init.sql` até `migrations/018_economy_usage_stats.sql`.
 
 Para subir do zero (manual), aplique os `.sql` em ordem:
 
@@ -87,6 +89,7 @@ Evoluções recentes de schema:
 - `015_player_items.sql`: adiciona instâncias de item por personagem para progressão de forja (`upgrade_level`, quebra e equip por instância).
 - `016_energy_timestamp.sql`: energia com cálculo por timestamp (`last_energy_update`) sem worker de regen.
 - `017_player_timers.sql`: timers genéricos por jogador (`player_timers`) para cooldowns/sistemas.
+- `018_economy_usage_stats.sql`: estatísticas de compra para economia dinâmica (`item_usage_stats`).
 
 ## Atualizações recentes
 
@@ -107,6 +110,10 @@ Evoluções recentes de schema:
   - Engine de menus reutilizável em `internal/menu/` para reduzir duplicação de teclado inline.
   - Camada inicial de serviços em `internal/services/` para separar lógica de negócio dos handlers.
   - Auto-caça em modo offline: processamento por ciclos com base em `last_tick_at` quando o jogador retorna.
+  - Worker manager central em `internal/systems/workers` (pix, eventos, limpeza e manutenção).
+  - Serviço de pagamento idempotente em `internal/services/payment`.
+  - Camada anti-cheat em `internal/services/anti_cheat` (duplicidade de callback e transições inválidas).
+  - Eventos globais em `internal/systems/events` (Blood Moon, Tormenta Storm, Double Drop).
 - Navegação:
   - Botões `⬅️ Voltar` padronizados com destino contextual (inventário, loja, habilidades, vender).
   - `🛒 Loja` e `💰 Vender` disponíveis de forma fixa no menu principal.
@@ -133,6 +140,7 @@ Evoluções recentes de schema:
 | `pix_payments` | Pagamentos Pix |
 | `auto_hunt_sessions` | Sessões de caça automática VIP |
 | `player_timers` | Timers/cooldowns genéricos por jogador |
+| `item_usage_stats` | Estatística de uso para precificação dinâmica |
 | `diamond_log` | Log de transações de diamantes |
 | `combat_log` | Histórico de combates |
 | `daily_bonus` | Controle de bônus diário |
@@ -190,6 +198,11 @@ tormenta-bot/
 │   │   └── crafting.go         # Receitas e consumo de materiais
 │   ├── dungeon/
 │   │   └── generator.go        # Geração procedural de salas (5-10)
+│   ├── systems/
+│   │   ├── workers/
+│   │   │   └── manager.go      # Workers centralizados de manutenção/pix/eventos
+│   │   └── events/
+│   │       └── world_events.go # Eventos globais temporários
 │   ├── explore/
 │   │   └── events.go           # Eventos aleatórios de exploração
 │   ├── menu/
@@ -206,7 +219,11 @@ tormenta-bot/
 │   │   ├── shop_service.go     # Regras de loja/compra
 │   │   ├── combat_service.go   # Regras de combate
 │   │   ├── autohunt_service.go # Processamento offline de ciclos da auto-caça
-│   │   └── drop_service.go     # Serviço de drop por contexto de jogo
+│   │   ├── drop_service.go     # Serviço de drop por contexto de jogo
+│   │   ├── payment/
+│   │   │   └── service.go      # Confirmação PIX idempotente + validação antifraude
+│   │   └── anti_cheat/
+│   │       └── guard.go        # Guards de callback e transição de estado
 │   ├── timers/
 │   │   └── store.go            # Persistência de timers/cooldowns
 │   └── models/
@@ -218,7 +235,8 @@ tormenta-bot/
 │   ├── 014_shield_offhand_slot.sql
 │   ├── 015_player_items.sql
 │   ├── 016_energy_timestamp.sql
-│   └── 017_player_timers.sql
+│   ├── 017_player_timers.sql
+│   └── 018_economy_usage_stats.sql
 ├── scripts/
 │   ├── update.ps1              # Atualização com backup (Windows)
 │   └── update.sh               # Atualização com backup (Linux/macOS)
@@ -393,7 +411,6 @@ Exemplo:
 - Regeneração 2× mais rápida
 - 🤖 Caça automática (offline hunting)
 
-**Caça automática:** o jogador seleciona uma zona e inicia a sessão. Um worker em background executa ticks a cada 5 minutos — consome 1⚡, sorteia monstro, simula combate e credita recompensas. O relatório mostra status consolidado (kills, XP, ouro, nível e diamantes) sem spam de notificação por tick. Para automaticamente se energia zerar, personagem morrer ou VIP expirar.
 **Caça automática:** o jogador seleciona uma zona e inicia a sessão. O progresso é processado em modo offline por ciclos de 60s com base no `last_tick_at` quando o jogador abre painel/relatório/stop. Cada ciclo consome 1⚡, sorteia monstro, simula combate e credita recompensas. Para automaticamente se energia zerar, personagem morrer ou VIP expirar.
 
 ---
@@ -421,7 +438,7 @@ Apenas usuários com ID listado em `GM_IDS` têm acesso. O comando `/gm` sem arg
 **Fluxo:**
 1. Jogador escolhe pacote de diamantes
 2. Bot gera cobrança via AbacatePay e exibe QR Code Pix
-3. Jogador paga → AbacatePay envia webhook `POST /pix/webhook`
+3. Jogador paga → AbacatePay envia webhook `POST /pix/webhook` (opcionalmente validado por `X-AbacatePay-Secret`)
 4. Bot confirma em `pix_payments` e credita diamantes
 
 **Fallback:** sem webhook configurado, o bot faz polling a cada 15 segundos automaticamente.

@@ -5,6 +5,7 @@ import (
 	"log"
 	"math"
 	"math/rand"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,8 +16,10 @@ import (
 	"github.com/tormenta-bot/internal/database"
 	"github.com/tormenta-bot/internal/drops"
 	"github.com/tormenta-bot/internal/game"
+	geconomy "github.com/tormenta-bot/internal/game/economy"
 	menukit "github.com/tormenta-bot/internal/menu"
 	"github.com/tormenta-bot/internal/models"
+	"github.com/tormenta-bot/internal/services/anti_cheat"
 )
 
 var Bot *tgbotapi.BotAPI
@@ -32,7 +35,21 @@ var (
 	sellCart      = map[int64]*models.SellCart{}     // seleção multi-venda
 	navCurrent    = map[int64]string{}               // tela atual por usuário (navegação)
 	navBack       = map[int64]map[string]string{}    // destino de voltar por menu dinâmico
+	callbackGuard = anti_cheat.NewCallbackGuard()
+	stateGuard    = anti_cheat.NewTransitionGuard()
 )
+
+func dynamicPricingEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("ECONOMY_DYNAMIC_PRICING")))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
+}
+
+func shopUnitPrice(item models.Item) int {
+	if !dynamicPricingEnabled() {
+		return item.Price
+	}
+	return geconomy.DynamicPrice(item.ID, item.Price)
+}
 
 func isDynamicBackMenu(dest string) bool {
 	switch dest {
@@ -196,6 +213,11 @@ func HandleCallback(cb *tgbotapi.CallbackQuery) {
 	msgID := cb.Message.MessageID
 	data := cb.Data
 	rememberMenuBack(userID, data)
+	cbKey := fmt.Sprintf("%d:%d:%s", userID, msgID, data)
+	if !callbackGuard.Allow(cbKey, 900*time.Millisecond) {
+		Bot.Request(tgbotapi.NewCallback(cb.ID, "Ação duplicada ignorada"))
+		return
+	}
 
 	Bot.Request(tgbotapi.NewCallback(cb.ID, ""))
 
@@ -1360,7 +1382,8 @@ func showShopPage(chatID int64, msgID int, userID int64, pageType string) {
 		total := 0
 		for _, ci := range cart.Items {
 			it := game.Items[ci.ItemID]
-			subtotal := it.Price * ci.Qty
+			unit := shopUnitPrice(it)
+			subtotal := unit * ci.Qty
 			total += subtotal
 			caption += fmt.Sprintf("  %s %s ×%d = *%d*🪙\n", it.Emoji, it.Name, ci.Qty, subtotal)
 		}
@@ -1392,7 +1415,8 @@ func showShopPage(chatID int64, msgID int, userID int64, pageType string) {
 	})
 
 	for _, item := range itemsSorted {
-		afford := char.Gold >= item.Price
+		price := shopUnitPrice(item)
+		afford := char.Gold >= price
 		emoji := "🛒"
 		if !afford {
 			emoji = "💸"
@@ -1405,7 +1429,7 @@ func showShopPage(chatID int64, msgID int, userID int64, pageType string) {
 				break
 			}
 		}
-		label := fmt.Sprintf("%s %s — %d🪙", item.Emoji, item.Name, item.Price)
+		label := fmt.Sprintf("%s %s — %d🪙", item.Emoji, item.Name, price)
 		if inCart > 0 {
 			label += fmt.Sprintf(" [%d]", inCart)
 		}
@@ -1467,7 +1491,7 @@ func showShopItem(chatID int64, msgID int, userID int64, tab string, itemID stri
 	}
 	caption := fmt.Sprintf(
 		"🏪 *Item da Loja*\n\n%s *%s*\nPreço: *%d*🪙\nNo carrinho: *%d*\n\n_%s_",
-		item.Emoji, item.Name, item.Price, inCart, item.Description,
+		item.Emoji, item.Name, shopUnitPrice(item), inCart, item.Description,
 	)
 	rows := [][]tgbotapi.InlineKeyboardButton{
 		tgbotapi.NewInlineKeyboardRow(
@@ -1596,9 +1620,10 @@ func handleShopCheckout(chatID int64, msgID int, userID int64) {
 
 	for _, ci := range cart.Items {
 		item := game.Items[ci.ItemID]
-		subtotal := item.Price * ci.Qty
+		unit := shopUnitPrice(item)
+		subtotal := unit * ci.Qty
 		totalGold += subtotal
-		caption += fmt.Sprintf("%s *%s* — %d × *%d*🪙 = *%d*🪙\n_%s_\n", item.Emoji, item.Name, ci.Qty, item.Price, subtotal, item.Description)
+		caption += fmt.Sprintf("%s *%s* — %d × *%d*🪙 = *%d*🪙\n_%s_\n", item.Emoji, item.Name, ci.Qty, unit, subtotal, item.Description)
 		rows = append(rows, []tgbotapi.InlineKeyboardButton{
 			tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("➖ %s", item.Name), "shop_dec_"+item.ID),
 			tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("%d", ci.Qty), "shop_checkout"),
@@ -1655,7 +1680,7 @@ func handleShopQty(chatID int64, msgID int, userID int64, qtyStr string) {
 		state.PayWith = "gold"
 	}
 
-	totalGold := item.Price * state.Quantity
+	totalGold := shopUnitPrice(item) * state.Quantity
 	totalDiamond := item.DiamondPrice * state.Quantity
 
 	canAfford := false
@@ -1723,7 +1748,7 @@ func handleShopConfirmBuy(chatID int64, msgID int, userID int64) {
 	total := 0
 	for _, ci := range cart.Items {
 		item := game.Items[ci.ItemID]
-		total += item.Price * ci.Qty
+		total += shopUnitPrice(item) * ci.Qty
 	}
 	if char.Gold < total {
 		editPhoto(chatID, msgID, "shop", fmt.Sprintf("❌ Ouro insuficiente! Precisa *%d* 🪙", total), bkp("menu_shop"))
@@ -1735,6 +1760,7 @@ func handleShopConfirmBuy(chatID int64, msgID int, userID int64) {
 	for _, ci := range cart.Items {
 		item := game.Items[ci.ItemID]
 		database.AddItem(char.ID, item.ID, item.Type, ci.Qty)
+		_ = database.IncrementItemUsage(item.ID, ci.Qty)
 		summary += fmt.Sprintf("%s *%s* × %d\n", item.Emoji, item.Name, ci.Qty)
 	}
 
