@@ -464,13 +464,14 @@ func SaveCharacterEnergy(charID int, energy int, energyMax int, regenAt time.Tim
 	if energy < 0 {
 		energy = 0
 	}
+	lastUpdate := regenAt.Unix()
 	_, err := DB.Exec(`
 		UPDATE characters
 		SET energy=$1, energy_max=$2, energy_regen_at=$3,
-		    last_energy_update=EXTRACT(EPOCH FROM $3)::BIGINT,
+		    last_energy_update=$4,
 		    updated_at=NOW()
-		WHERE id=$4
-	`, energy, energyMax, regenAt, charID)
+		WHERE id=$5
+	`, energy, energyMax, regenAt, lastUpdate, charID)
 	return err
 }
 
