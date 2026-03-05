@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/joho/godotenv"
 	"github.com/tormenta-bot/internal/assets"
+	botruntime "github.com/tormenta-bot/internal/bot"
 	"github.com/tormenta-bot/internal/database"
 	"github.com/tormenta-bot/internal/handlers"
 )
@@ -89,14 +91,25 @@ func main() {
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
 	updates := bot.GetUpdatesChan(u)
-	for update := range updates {
-		if update.Message != nil {
-			handlers.HandleMessage(update.Message)
-		}
-		if update.CallbackQuery != nil {
-			handlers.HandleCallback(update.CallbackQuery)
-		}
+	workers := envInt("UPDATE_WORKERS", 1) // safe default preserves current behavior
+	log.Printf("🧵 Update worker pool started with %d worker(s)", workers)
+	botruntime.StartUpdateWorkerPool(updates, workers, botruntime.UpdateHandlers{
+		OnMessage:  handlers.HandleMessage,
+		OnCallback: handlers.HandleCallback,
+	})
+	select {}
+}
+
+func envInt(key string, def int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
 	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return def
+	}
+	return n
 }
 
 // =============================================
