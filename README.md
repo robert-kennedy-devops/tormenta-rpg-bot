@@ -86,6 +86,12 @@ Evoluções recentes de schema:
 
 ## Atualizações recentes
 
+- Arquitetura e escalabilidade:
+  - Novo processamento concorrente de updates em `internal/bot/update_worker.go`.
+  - Rate limiting de chamadas Telegram em `internal/bot/rate_limiter.go`.
+  - Roteamento dedicado de mensagens/callbacks em `internal/router/`.
+  - Engine de menus reutilizável em `internal/menu/` para reduzir duplicação de teclado inline.
+  - Camada inicial de serviços em `internal/services/` para separar lógica de negócio dos handlers.
 - Navegação:
   - Botões `⬅️ Voltar` padronizados com destino contextual (inventário, loja, habilidades, vender).
   - `🛒 Loja` e `💰 Vender` disponíveis de forma fixa no menu principal.
@@ -125,18 +131,22 @@ tormenta-bot/
 ├── cmd/bot/
 │   └── main.go                 # Entrypoint: bot, webhook HTTP, workers
 ├── internal/
+│   ├── bot/
+│   │   ├── rate_limiter.go     # Limitador de chamadas para API do Telegram
+│   │   └── update_worker.go    # Worker pool para processamento de updates
 │   ├── assets/
 │   │   ├── generator.go        # Geração procedural de imagens de personagem
 │   │   └── manager.go          # Cache de imagens no Telegram
 │   ├── database/
-│   │   └── database.go         # Conexão e queries SQL
+│   │   ├── database.go         # Conexão e queries SQL
+│   │   └── image_cache.go      # Implementação de cache de file_id no banco
 │   ├── game/
 │   │   ├── combat.go           # Engine de combate por turnos
 │   │   ├── data.go             # Raças, classes, monstros, mapas, itens, drops
-│   │   ├── dungeon.go          # Lógica de masmorras
+│   │   ├── dungeon_logic.go    # Lógica de masmorras
 │   │   ├── energy.go           # Sistema de energia e regeneração
-│   │   ├── pix.go              # Integração AbacatePay
-│   │   └── pvp.go              # Lógica de PvP
+│   │   ├── game_pix.go         # Integração AbacatePay
+│   │   └── pvp_game.go         # Lógica de PvP
 │   ├── handlers/
 │   │   ├── handlers.go         # Handler principal: mensagens e callbacks
 │   │   ├── dungeon_handler.go  # Handlers de dungeon
@@ -147,6 +157,19 @@ tormenta-bot/
 │   │   ├── pvp_handler.go      # Handlers de PvP
 │   │   ├── rank.go             # Ranking global
 │   │   └── vip.go              # VIP: painel, compra, caça automática
+│   ├── menu/
+│   │   ├── engine.go           # Helpers de botões/linhas/teclados inline
+│   │   ├── main_menu.go        # Menu principal
+│   │   ├── shop_menu.go        # Menus da loja
+│   │   ├── inventory_menu.go   # Menus do inventário
+│   │   └── ...                 # Menus de VIP, PvP, ranking, pix e dungeon
+│   ├── router/
+│   │   ├── callback_router.go  # Roteador de ações de callback
+│   │   └── message_router.go   # Roteador de mensagens de texto/comando
+│   ├── services/
+│   │   ├── player_service.go   # Regras de jogador
+│   │   ├── shop_service.go     # Regras de loja/compra
+│   │   └── combat_service.go   # Regras de combate
 │   └── models/
 │       └── models.go           # Structs: Character, Player, Item, Monster...
 ├── migrations/
