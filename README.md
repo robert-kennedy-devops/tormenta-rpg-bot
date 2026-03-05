@@ -176,7 +176,9 @@ tormenta-bot/
 │   ├── database/
 │   │   ├── database.go         # Conexão e queries SQL
 │   │   ├── image_cache.go      # Implementação de cache de file_id no banco
-│   │   └── player_items.go     # Persistência de instâncias de itens (forja)
+│   │   ├── player_items.go     # Persistência de instâncias de itens (forja)
+│   │   ├── pix_payments.go     # Operações de pagamentos Pix (idempotência)
+│   │   └── ranking.go          # Queries de ranking/posição global
 │   ├── game/
 │   │   ├── combat.go           # Engine de combate por turnos
 │   │   ├── data.go             # Raças, classes, monstros, mapas, itens, drops
@@ -187,6 +189,7 @@ tormenta-bot/
 │   │   └── extended_items.go   # Itens estendidos (materiais/crafting)
 │   ├── handlers/
 │   │   ├── handlers.go         # Handler principal: mensagens e callbacks
+│   │   ├── main_menu.go        # Fluxo de /start e menu principal
 │   │   ├── dungeon_handler.go  # Handlers de dungeon
 │   │   ├── effects.go          # Estado/efeitos temporários de combate
 │   │   ├── gm.go               # Painel e comandos de GM
@@ -484,6 +487,8 @@ Todas as ações administrativas relevantes são auditadas em `gm_action_logs`.
 4. Bot confirma em `pix_payments` e credita diamantes
 
 **Fallback:** sem webhook configurado, o bot faz polling a cada 15 segundos automaticamente.
+
+O fluxo de confirmação usa idempotência transacional no banco (`UPDATE ... WHERE status='pending' RETURNING ...`), evitando crédito duplicado em concorrência.
 
 **Webhook no painel AbacatePay:** `https://seu-dominio.com/pix/webhook`
 

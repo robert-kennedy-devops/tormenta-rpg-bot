@@ -53,7 +53,7 @@ func (s *Service) unlockTx(txid string) {
 }
 
 // ConfirmByTxID provides idempotent confirmation with basic fraud guards.
-func (s *Service) ConfirmByTxID(txid, source string) (ConfirmResult, error) {
+func (s *Service) ConfirmByTxID(txid, _ string) (ConfirmResult, error) {
 	if txid == "" {
 		return ConfirmResult{}, fmt.Errorf("empty txid")
 	}
@@ -80,13 +80,7 @@ func (s *Service) ConfirmByTxID(txid, source string) (ConfirmResult, error) {
 	if err != nil {
 		return ConfirmResult{}, err
 	}
-	if diamonds > 0 {
-		reason := "pix_confirmed"
-		if source != "" {
-			reason = "pix_" + source
-		}
-		database.LogDiamond(charID, diamonds, reason)
-	}
+	// Diamond log is written atomically inside database confirmation transaction.
 	return s.resultFromChar(charID, diamonds, false)
 }
 
