@@ -1,6 +1,8 @@
 # ⚔️ Tormenta RPG Bot
 
-Bot de RPG multiplayer para Telegram, inspirado no sistema Tormenta. Criação de personagens, combate por turnos, masmorras, PvP, loja, sistema VIP com caça automática e pagamentos via Pix (AbacatePay).
+Bot MMORPG multiplayer para Telegram, inspirado no sistema Tormenta 20. Combate por turnos com sistema d20, masmorras procedurais, PvP ranqueado, guildas, economia controlada, bosses mundiais, raids, temporadas e pagamentos via Pix (AbacatePay).
+
+Arquitetura modular escrita em Go, projetada para escalar de centenas a **1 milhão de jogadores**.
 
 ---
 
@@ -10,13 +12,14 @@ Bot de RPG multiplayer para Telegram, inspirado no sistema Tormenta. Criação d
 2. [Configuração rápida](#configuração-rápida)
 3. [Variáveis de ambiente](#variáveis-de-ambiente)
 4. [Banco de dados](#banco-de-dados)
-5. [Atualizações recentes](#atualizações-recentes)
-6. [Estrutura do projeto](#estrutura-do-projeto)
-7. [Gameplay](#gameplay)
+5. [Estrutura do projeto](#estrutura-do-projeto)
+6. [Gameplay](#gameplay)
+7. [Sistemas avançados](#sistemas-avançados)
 8. [Comandos de GM](#comandos-de-gm)
 9. [Pagamentos Pix](#pagamentos-pix-abacatepay)
-10. [Deploy com Docker](#deploy-com-docker)
-11. [Deploy manual](#deploy-manual)
+10. [Arquitetura técnica](#arquitetura-técnica)
+11. [Deploy com Docker](#deploy-com-docker)
+12. [Deploy manual](#deploy-manual)
 
 ---
 
@@ -27,6 +30,7 @@ Bot de RPG multiplayer para Telegram, inspirado no sistema Tormenta. Criação d
 | Linguagem | Go 1.21 |
 | Telegram API | `go-telegram-bot-api/v5` |
 | Banco de dados | PostgreSQL 16 |
+| Cache | In-memory (MemCache) com interface para Redis |
 | Pagamentos | AbacatePay (Pix) |
 | Geração de imagens | Go nativo (`image/draw`, `image/png`) |
 | Containerização | Docker + Docker Compose |
@@ -39,7 +43,7 @@ Bot de RPG multiplayer para Telegram, inspirado no sistema Tormenta. Criação d
 git clone https://github.com/seu-usuario/tormenta-bot.git
 cd tormenta-bot
 cp .env.example .env
-# edite o .env
+# edite o .env com suas credenciais
 docker compose up -d
 docker compose logs -f bot
 ```
@@ -61,15 +65,17 @@ ABACATEPAY_TOKEN=acp_...             # Habilita pagamentos Pix
 MP_WEBHOOK_PORT=8080                 # Porta HTTP para webhooks (padrão: 8080)
 GM_LOG_CHAT=-100123456789            # Grupo para logs de ações GM
 ASSETS_DIR=./assets/images           # Diretório de imagens geradas
-DUNGEON_PROCEDURAL_ENABLED=false     # true=gera dungeons procedurais (5-10 salas)
-ABACATEPAY_WEBHOOK_SECRET=change-me  # valida header X-AbacatePay-Secret (opcional)
+DUNGEON_PROCEDURAL_ENABLED=false     # true = dungeons procedurais (5-10 salas)
+ABACATEPAY_WEBHOOK_SECRET=change-me  # valida header X-AbacatePay-Secret
 ECONOMY_DYNAMIC_PRICING=false        # preço dinâmico progressivo na loja NPC
-TELEMETRY_ENABLED=false              # analytics opcionais (login/dungeon/forge/pix)
-ENERGY_FIXED_CAP=true                # default true: cap fixo 100/200 no worker central de energia
-FORGE_PROFILE=legacy10               # legacy10 (atual) | classic5 (+1..+5 com chances MMORPG)
+TELEMETRY_ENABLED=false              # analytics opcionais
+ENERGY_FIXED_CAP=true                # cap fixo 100/200 no worker central de energia
+FORGE_PROFILE=legacy10               # legacy10 | classic5
+UPDATE_WORKERS=1                     # workers de processamento de updates do Telegram
+REDIS_ADDR=localhost:6379            # opcional: ativa Redis para cache distribuído
 ```
 
-**Importante:** nunca faça commit do arquivo `.env`. Se você chegou a compartilhar tokens reais (Telegram/AbacatePay), faça **rotação** imediata no painel correspondente.
+> **Importante:** nunca faça commit do `.env`. Se tokens reais forem expostos, faça **rotação** imediata nos painéis correspondentes.
 
 ---
 
@@ -77,67 +83,15 @@ FORGE_PROFILE=legacy10               # legacy10 (atual) | classic5 (+1..+5 com c
 
 O projeto usa **migrações incrementais** em `migrations/001_init.sql` até `migrations/021_energy_tick_index.sql`.
 
-Para subir do zero (manual), aplique os `.sql` em ordem:
-
 ```bash
+# Subida manual (sem Docker)
 psql -U postgres -c "CREATE DATABASE tormenta_rpg;"
 for f in migrations/*.sql; do psql -U tormenta -d tormenta_rpg -f "$f"; done
 ```
 
-Com Docker, o PostgreSQL executa automaticamente todos os arquivos `.sql` de `./migrations/` em ordem alfabética.
+Com Docker, o PostgreSQL executa automaticamente todos os `.sql` de `./migrations/` em ordem alfabética.
 
-Evoluções recentes de schema:
-- `013_backfill_equipped_slots.sql`: normalização/backfill de slots equipados.
-- `014_shield_offhand_slot.sql`: cria e ajusta o slot dedicado `offhand` (escudo).
-- `015_player_items.sql`: adiciona instâncias de item por personagem para progressão de forja (`upgrade_level`, quebra e equip por instância).
-- `016_energy_timestamp.sql`: energia com cálculo por timestamp (`last_energy_update`) com base para regen offline.
-- `017_player_timers.sql`: timers genéricos por jogador (`player_timers`) para cooldowns/sistemas.
-- `018_economy_usage_stats.sql`: estatísticas de compra para economia dinâmica (`item_usage_stats`).
-- `019_perf_indexes_analytics.sql`: índices de performance + tabela opcional de analytics (`analytics_events`).
-- `020_gm_action_logs.sql`: trilha de auditoria de ações GM (`gm_action_logs`).
-- `021_energy_tick_index.sql`: índice parcial para tick de energia por timestamp (`idx_characters_energy_tick`).
-
-## Atualizações recentes
-
-- Progressão avançada (Fase 2):
-  - Novo domínio de itens em `internal/items` com separação entre **template** e **instância de jogador**.
-  - Sistema de **forja** em `internal/forge` com upgrade de `+1` até `+10`, chance configurável e risco de quebra a partir de `+5`.
-  - Sistema de **crafting** em `internal/crafting` com receitas e consumo de materiais.
-  - Sistema de **drops modulares** em `internal/drops` e serviço em `internal/services/drop_service.go`.
-  - Eventos de **exploração aleatória** em `internal/explore`.
-  - Integração inicial no jogo:
-    - Menus `🔨 Forja` e `🧰 Crafting` no menu principal.
-    - Drops de materiais ativos em combate normal, dungeon e auto-caça.
-    - Auto-caça com chance reduzida por multiplicador (`5%` base -> `1.5%` efetivo).
-- Arquitetura e escalabilidade:
-  - Novo processamento concorrente de updates em `internal/bot/update_worker.go`.
-  - Rate limiting de chamadas Telegram em `internal/bot/rate_limiter.go`.
-  - Roteamento dedicado de mensagens/callbacks em `internal/router/`.
-  - Engine de menus reutilizável em `internal/menu/` para reduzir duplicação de teclado inline.
-  - Camada inicial de serviços em `internal/services/` para separar lógica de negócio dos handlers.
-  - Auto-caça em modo offline: processamento por ciclos com base em `last_tick_at` quando o jogador retorna.
-  - Worker manager central em `internal/systems/workers` (pix, eventos, limpeza e manutenção).
-  - Serviço de pagamento idempotente em `internal/services/payment`.
-  - Camada anti-cheat em `internal/services/anti_cheat` (duplicidade de callback e transições inválidas).
-  - Eventos globais em `internal/systems/events` (Blood Moon, Tormenta Storm, Double Drop).
-  - Novas camadas incrementais: `internal/repository`, `internal/service`, `internal/engine`, `internal/worker`.
-  - Segurança adicional por usuário: mutex por player + rate limit por usuário nos handlers.
-  - Cache opcional TTL para ranking/loja/config de dungeon.
-  - Telemetria opcional para `player_login`, `dungeon_clear`, `item_upgrade`, `pix_purchase`.
-- Navegação:
-  - Botões `⬅️ Voltar` padronizados com destino contextual (inventário, loja, habilidades, vender).
-  - `🛒 Loja` e `💰 Vender` disponíveis de forma fixa no menu principal.
-- Inventário e equipamentos:
-  - Fluxo de equipar acessórios sem abrir janela secundária; mantém o usuário no fluxo principal.
-  - Suporte a slot `offhand` para escudos na tela/equipamento e no cálculo de status.
-- Combate e efeitos:
-  - Sistema de efeitos temporários em `internal/handlers/effects.go` integrado ao PvE, PvP, masmorra e auto-caça.
-  - Suporte a buffs/debuffs de CA, penalidade de ataque, redução/aumento de dano, crítico forçado/ampliado, queimadura e perda de turno.
-  - Veneno aplicado por monstros e por skills do jogador (linha Envenenador do Ladino), com DoT em PvE, PvP, masmorra e auto-caça.
-- Operação:
-  - Scripts de atualização: `scripts/update.ps1` e `scripts/update.sh` com backup de banco e migração opcional.
-
-### Tabelas
+### Tabelas principais
 
 | Tabela | Descrição |
 |---|---|
@@ -146,18 +100,14 @@ Evoluções recentes de schema:
 | `inventory` | Itens por personagem |
 | `character_skills` | Habilidades aprendidas |
 | `dungeon_runs` / `dungeon_best` | Histórico e recordes de masmorras |
-| `pvp_challenges` / `pvp_stats` | Duelos e ranking ELO |
+| `pvp_challenges` / `pvp_stats` | Duelos e ranking Elo |
 | `pix_payments` | Pagamentos Pix |
 | `auto_hunt_sessions` | Sessões de caça automática VIP |
-| `player_timers` | Timers/cooldowns genéricos por jogador |
-| `item_usage_stats` | Estatística de uso para precificação dinâmica |
+| `player_timers` | Timers/cooldowns genéricos |
+| `item_usage_stats` | Estatísticas de uso para precificação dinâmica |
 | `analytics_events` | Eventos opcionais de telemetria |
-| `gm_action_logs` | Auditoria de ações administrativas (GM) |
-| `diamond_log` | Log de transações de diamantes |
-| `combat_log` | Histórico de combates |
-| `daily_bonus` | Controle de bônus diário |
-| `image_cache` | Cache de `file_id` do Telegram |
-| `player_items` | Instâncias de itens equipáveis por personagem (forja/progressão) |
+| `gm_action_logs` | Auditoria de ações administrativas |
+| `player_items` | Instâncias de itens equipáveis (forja/progressão) |
 
 ---
 
@@ -166,124 +116,87 @@ Evoluções recentes de schema:
 ```
 tormenta-bot/
 ├── cmd/bot/
-│   └── main.go                 # Entrypoint: bot, webhook HTTP, workers
+│   └── main.go                    # Entrypoint: bot, webhook HTTP, workers
 ├── internal/
-│   ├── bot/
-│   │   ├── rate_limiter.go     # Limitador de chamadas para API do Telegram
-│   │   └── update_worker.go    # Worker pool para processamento de updates
-│   ├── assets/
-│   │   ├── generator.go        # Geração procedural de imagens de personagem
-│   │   └── manager.go          # Cache de imagens no Telegram
-│   ├── database/
-│   │   ├── database.go         # Conexão e queries SQL
-│   │   ├── image_cache.go      # Implementação de cache de file_id no banco
-│   │   ├── player_items.go     # Persistência de instâncias de itens (forja)
-│   │   ├── pix_payments.go     # Operações de pagamentos Pix (idempotência)
-│   │   └── ranking.go          # Queries de ranking/posição global
-│   ├── game/
-│   │   ├── combat.go           # Engine de combate por turnos
-│   │   ├── data.go             # Raças, classes, monstros, mapas, itens, drops
-│   │   ├── dungeon_logic.go    # Lógica de masmorras
-│   │   ├── energy.go           # Sistema de energia e regeneração
-│   │   ├── game_pix.go         # Integração AbacatePay
-│   │   ├── pvp_game.go         # Lógica de PvP
-│   │   └── extended_items.go   # Itens estendidos (materiais/crafting)
-│   ├── handlers/
-│   │   ├── handlers.go         # Handler principal: mensagens e callbacks
-│   │   ├── main_menu.go        # Fluxo de /start e menu principal
-│   │   ├── dungeon_handler.go  # Handlers de dungeon
-│   │   ├── effects.go          # Estado/efeitos temporários de combate
-│   │   ├── gm.go               # Painel e comandos de GM
-│   │   ├── media.go            # Envio de imagens com fallback texto
-│   │   ├── pix_handler.go      # Compra, polling e webhook de Pix
-│   │   ├── pvp_handler.go      # Handlers de PvP
-│   │   ├── rank.go             # Ranking global
-│   │   ├── vip.go              # VIP: painel, compra, caça automática
-│   │   ├── drop_materials.go   # Aplicação de drops de materiais por modo
-│   │   └── progression.go      # Menus e fluxo de Forja/Crafting
-│   ├── items/
-│   │   ├── types.go            # ItemTemplate, PlayerItem e stat blocks
-│   │   └── materials.go        # Catálogo de materiais de forja/crafting
-│   ├── forge/
-│   │   └── forge.go            # Regras de sucesso/falha/quebra da forja
-│   ├── drops/
-│   │   ├── loot.go             # Loot tables por modo (normal/dungeon/auto)
-│   │   └── default_tables.go   # Tabelas padrão de materiais
-│   ├── crafting/
-│   │   └── crafting.go         # Receitas e consumo de materiais
-│   ├── dungeon/
-│   │   └── generator.go        # Geração procedural de salas (5-10)
-│   ├── energy/
-│   │   └── service.go          # Tick central de regeneração por timestamp (batch)
-│   ├── systems/
-│   │   ├── workers/
-│   │   │   └── manager.go      # Workers centralizados de manutenção/pix/eventos
-│   │   └── events/
-│   │       └── world_events.go # Eventos globais temporários
-│   ├── explore/
-│   │   └── events.go           # Eventos aleatórios de exploração
-│   ├── engine/
-│   │   └── state_guard.go      # Validação de transição de estado do jogo
-│   ├── repository/
-│   │   ├── interfaces.go       # Contratos de acesso a dados
-│   │   └── sql_repository.go   # Adapter SQL sobre internal/database
-│   ├── service/
-│   │   ├── security.go         # Mutex por player + rate limit por usuário
-│   │   ├── payment.go          # Facade de confirmação de pagamento
-│   │   ├── ranking.go          # Ranking com cache opcional
-│   │   └── config_cache.go     # Cache opcional de loja/dungeon config
-│   ├── worker/
-│   │   └── manager.go          # Camada compatível para workers centralizados
-│   ├── gmtools/
-│   │   └── service.go          # Ferramentas administrativas (tp, energia, reset dungeon, spawn)
-│   ├── menu/
-│   │   ├── engine.go           # Helpers de botões/linhas/teclados inline
-│   │   ├── main_menu.go        # Menu principal
-│   │   ├── shop_menu.go        # Menus da loja
-│   │   ├── inventory_menu.go   # Menus do inventário
-│   │   └── ...                 # Menus de VIP, PvP, ranking, pix e dungeon
-│   ├── router/
-│   │   ├── callback_router.go  # Roteador de ações de callback
-│   │   └── message_router.go   # Roteador de mensagens de texto/comando
-│   ├── services/
-│   │   ├── player_service.go   # Regras de jogador
-│   │   ├── shop_service.go     # Regras de loja/compra
-│   │   ├── combat_service.go   # Regras de combate
-│   │   ├── autohunt_service.go # Processamento offline de ciclos da auto-caça
-│   │   ├── drop_service.go     # Serviço de drop por contexto de jogo
-│   │   ├── payment/
-│   │   │   └── service.go      # Confirmação PIX idempotente + validação antifraude
-│   │   └── anti_cheat/
-│   │       └── guard.go        # Guards de callback e transição de estado
-│   ├── timers/
-│   │   └── store.go            # Persistência de timers/cooldowns
-│   ├── cache/
-│   │   ├── ttl_cache.go        # Cache TTL genérico
-│   │   └── game_cache.go       # Cache de ranking/loja/dungeon
-│   ├── telemetry/
-│   │   └── telemetry.go        # Analytics opcionais
-│   ├── utils/
-│   │   ├── config/             # Loader de configurações por env
-│   │   ├── logger/             # Logger estruturado
-│   │   └── scheduler/          # Job scheduler simples por ticker
-│   └── models/
-│       └── models.go           # Structs: Character, Player, Item, Monster...
-├── migrations/
-│   ├── 001_init.sql
-│   ├── ...
-│   ├── 013_backfill_equipped_slots.sql
-│   ├── 014_shield_offhand_slot.sql
-│   ├── 015_player_items.sql
-│   ├── 016_energy_timestamp.sql
-│   ├── 017_player_timers.sql
-│   ├── 018_economy_usage_stats.sql
-│   ├── 019_perf_indexes_analytics.sql
-│   ├── 020_gm_action_logs.sql
-│   └── 021_energy_tick_index.sql
+│   ├── engine/                    # Motor de combate modular (sem efeitos colaterais)
+│   │   ├── state_guard.go         # Validação de transição de estado
+│   │   ├── combat_engine.go       # CombatEngine: orquestra um turno completo
+│   │   ├── damage_calculator.go   # Fórmula de dano, elementos, críticos, D20
+│   │   ├── status_engine.go       # StatusSet, 12 efeitos (veneno, burn, stun…)
+│   │   ├── effect_processor.go    # Combatant interface, ProcessEffect/Effects
+│   │   ├── skill_engine.go        # Resolução de habilidades, PassiveRegistry
+│   │   └── ai_engine.go           # AITier, MonsterAdaptation, SelectAction
+│   ├── rpg/                       # Sistema RPG completo (extensão sem quebrar game/)
+│   │   ├── race.go                # 7 raças: Humano, Elfo, Anão, Goblin, Qareen, Minotauro, Meio-Orc
+│   │   ├── class.go               # 8 classes: Guerreiro, Arcanista, Ladino, Caçador,
+│   │   │                          #            Paladino, Clérigo, Bárbaro, Bardo
+│   │   ├── attributes.go          # Atributos, modificadores D&D, stats derivados
+│   │   ├── xp.go                  # Curva XP nível 1–100, milestones, recompensas
+│   │   ├── skill_tree.go          # Árvores de habilidades por classe e ramo
+│   │   ├── talents.go             # Talentos (desbloqueados nos níveis 10/25/50/75/100)
+│   │   └── passives.go            # Registro de passivas de raça/classe no engine
+│   ├── economy/                   # Economia controlada anti-inflação
+│   │   ├── economy_manager.go     # EconomyManager global, gold in circulation
+│   │   ├── inflation_controller.go# Multiplicadores dinâmicos de drop/custo
+│   │   └── tax_system.go          # Taxas de mercado/leilão/comércio direto
+│   ├── market/                    # Mercado entre jogadores
+│   │   ├── listing.go             # Listagens de itens, ListingStore
+│   │   ├── auction.go             # Leilão, lances, buy-it-now, liquidação
+│   │   └── market_service.go      # MarketService: post/buy/cancel/bid/settle
+│   ├── guild/                     # Sistema completo de guildas
+│   │   ├── guild.go               # Guild model, Store, MemStore
+│   │   ├── guild_members.go       # GuildService: criar/convidar/expulsar/promover
+│   │   ├── guild_bank.go          # Banco da guilda, depósito/saque, XP de guilda
+│   │   ├── guild_perks.go         # Perks por nível, buffs temporários de guilda
+│   │   └── guild_war.go           # Territórios, guerras agendadas, pontuação
+│   ├── world/                     # Bosses mundiais e raids
+│   │   ├── world_boss.go          # BossManager global, spawn a cada 12h, ranking de dano
+│   │   └── raid_system.go         # RaidManager, sessões multi-fase, 5–20 jogadores
+│   ├── ai/                        # IA adaptativa de monstros
+│   │   ├── player_behavior_tracker.go # BehaviourProfile por jogador
+│   │   ├── monster_ai.go          # AdaptationStore, Advise, RecordPlayerAction
+│   │   └── behavior_tree.go       # Árvore de comportamento (Sequence/Selector)
+│   ├── pvp/                       # Arena PvP
+│   │   ├── ranking.go             # Sistema Elo, divisões, leaderboard, reset de temporada
+│   │   ├── matchmaking.go         # Fila com janela de rating crescente
+│   │   └── arena.go               # ArenaManager, partidas 1v1, forfeit, atualização de ranking
+│   ├── season/                    # Sistema de temporadas (3 meses)
+│   │   ├── season_manager.go      # Manager, StartSeason, CheckAndRollOver
+│   │   └── season_rewards.go      # 7 tiers de recompensa, SeasonEndSummary
+│   ├── eventbus/                  # Barramento de eventos global
+│   │   ├── events.go              # Event struct, 30+ Kind constants, construtores fluentes
+│   │   └── eventbus.go            # Bus com pool de 8 goroutines, 10k slots de fila
+│   ├── cache/                     # Camada de cache unificada
+│   │   ├── ttl_cache.go           # Cache TTL genérico (existente)
+│   │   ├── game_cache.go          # Cache de ranking/loja/dungeon (existente)
+│   │   └── redis_cache.go         # Interface Cache + MemCache fallback + helpers de chave
+│   ├── workers/                   # Workers de background escaláveis
+│   │   ├── combat_worker.go       # CombatPool: 16 goroutines, 1000 jobs assíncronos
+│   │   ├── economy_worker.go      # Snapshot + eventos de inflação a cada 10 min
+│   │   ├── event_worker.go        # Reage ao eventbus, broadcast Telegram
+│   │   └── raid_worker.go         # Spawn/expiração de boss mundial
+│   ├── game/                      # Lógica de jogo principal (existente, preservado)
+│   │   ├── combat.go              # Engine de combate por turnos (d20)
+│   │   ├── data.go                # Raças, classes, monstros, mapas, itens
+│   │   ├── dungeon_logic.go       # Lógica de masmorras
+│   │   ├── energy.go              # Sistema de energia e regeneração
+│   │   ├── pvp_game.go            # Lógica de PvP
+│   │   └── extended_items.go      # Itens estendidos (materiais/crafting)
+│   ├── handlers/                  # Handlers Telegram
+│   ├── menu/                      # Menus de teclado inline
+│   ├── router/                    # Roteador de mensagens/callbacks
+│   ├── services/                  # Serviços de negócio
+│   ├── repository/                # Contratos e adapters de persistência
+│   ├── database/                  # Queries SQL e migrações
+│   ├── models/                    # Structs: Character, Player, Item, Monster…
+│   ├── items/ forge/ drops/ crafting/ dungeon/ energy/ explore/
+│   ├── systems/ timers/ bot/ assets/ gmtools/ telemetry/ utils/
+│   └── service/ worker/ cache/    # Camadas de suporte (existentes)
+├── migrations/                    # 021 migrações SQL incrementais
 ├── scripts/
-│   ├── update.ps1              # Atualização com backup (Windows)
-│   └── update.sh               # Atualização com backup (Linux/macOS)
-├── assets/images/              # Imagens geradas (não versionado)
+│   ├── update.ps1                 # Atualização com backup (Windows)
+│   └── update.sh                  # Atualização com backup (Linux/macOS)
+├── assets/images/                 # Imagens geradas (não versionado)
 ├── Dockerfile
 ├── docker-compose.yml
 └── .env.example
@@ -293,156 +206,206 @@ tormenta-bot/
 
 ## Gameplay
 
-### Raças e Classes
+### Raças jogáveis
 
-Ao criar um personagem o jogador escolhe uma raça e uma classe.
-
-**Raças:**
-
-| Raça | Traço | Bônus principal |
+| Raça | Traço passivo | Destaques |
 |---|---|---|
-| 👤 Humano | +10% de XP ganho | Atributos equilibrados |
-| 🧝 Elfo | +20% dano mágico | DEX +3, INT +3 |
-| ⛏️ Anão | -15% dano recebido | CON +4, HP +25 |
-| 👹 Meio-Orc | +25% dano físico | STR +4, HP +20 |
+| 👤 Humano | +10% XP ganho | Atributos equilibrados, versátil |
+| 🧝 Elfo | +20% dano mágico | DEX +3, INT +3, MP +20 |
+| ⛏️ Anão | -15% dano recebido | CON +4, HP +25, imune a Freeze |
+| 👹 Meio-Orc | +25% dano físico | STR +4, HP +20, Berserk sob 20% HP |
+| 👺 Goblin | +15% chance crítico | DEX +4, venenos +1 turno, HP -10 |
+| 🧞 Qareen | +30% dano de Fogo | INT +4, CHA +4, imune a Burn, MP +30 |
+| 🐂 Minotauro | Ignora 10% de armadura | STR +5, CON +4, HP +40, resistente a físico |
 
-**Classes:**
+### Classes jogáveis
 
-| Classe | Função | HP base | MP base |
-|---|---|---|---|
-| ⚔️ Guerreiro | Tanque | 80 | 20 |
-| 🧙 Mago | Conjurador | 45 | 80 |
-| 🗡️ Ladino | DPS | 55 | 40 |
-| 🏹 Arqueiro | Distância | 60 | 35 |
+| Classe | Função | HP base | MP base | Traço |
+|---|---|---|---|---|
+| ⚔️ Guerreiro | Tanque | 80 | 20 | Maestria em Armas |
+| 🧙 Arcanista | Conjurador | 45 | 80 | Surto Arcano (a cada 4 feitiços, 1 grátis) |
+| 🗡️ Ladino | DPS | 55 | 40 | Facada pelas Costas (+40% dano em flanqueamento) |
+| 🏹 Caçador | Distância | 60 | 35 | Olho de Águia (+10% crit à distância) |
+| ⚜️ Paladino | Tanque/Suporte | 75 | 50 | Aura Sagrada (cura +10% para aliados) |
+| ✝️ Clérigo | Curandeiro | 55 | 75 | Graça Divina (10% curas duplas, imune a Curse) |
+| 🪓 Bárbaro | DPS brutal | 90 | 10 | Fúria Bárbara (+60% ATK em Berserk) |
+| 🎵 Bardo | Suporte | 58 | 60 | Inspiração (+15% XP da party pós-batalha) |
 
----
+### Progressão (nível 1–100)
 
-### Zonas e progressão
+| Milestone | Nível | Recompensa extra |
+|---|---|---|
+| Aventureiro | 10 | +1 ponto de habilidade bônus |
+| Veterano | 25 | +2 pontos de habilidade |
+| Campeão | 50 | +3 pts, +50 HP, +25 MP |
+| Lendário | 75 | +4 pontos de habilidade |
+| Imortal | 100 | +5 pts, +100 HP, +50 MP |
 
-O mapa é linear — viajar entre zonas custa 1⚡.
+A curva XP é suave: \~150k XP total no nível 20 (antigo cap), \~1.2M no nível 50, \~8M no nível 100.
+
+A cada **4 níveis** os dois atributos primários da classe sobem +1. A cada **10 níveis** todos os atributos sobem +1.
+
+### Árvore de habilidades
+
+Cada classe possui ramos de especialização com nós de Tier 1 a 4. Habilidades têm pré-requisitos, custo em pontos de habilidade e pré-requisito de nível. Capstones de Tier 4 são habilidades "ultimate".
+
+Novos ramos disponíveis:
+- **Bárbaro:** Fúria (Berserk, Sede de Sangue, Grito Mortal, Devastação) / Resistência
+- **Paladino:** Sagrado (Golpe Divino, Imposição de Mãos, Escudo Sagrado, Julgamento Divino)
+- **Clérigo:** Cura (Cura, Cura em Área, Ressurreição)
+- **Bardo:** Música (Inspiração, Cantiga do Sono, Sinfonia da Vitória)
+
+### Talentos
+
+Aos níveis 10, 25, 50, 75 e 100 o jogador escolhe um talento. Exemplos:
+
+| Talento | Nível | Efeito |
+|---|---|---|
+| 💪 Durão | 10 | +50 HP máximo |
+| 📚 Aprendizado Rápido | 10 | +15% XP |
+| 💎 Caçador de Tesouros | 25 | +10% drop rate |
+| 🌟 Proeza Lendária | 75 | +5% crit, +30 ATK, +20 DEF |
+| 👑 Paragão | 100 | +200 HP, +100 MP, +50 ATK, +10% XP, +20% ouro |
+
+### Zonas e progressão de mapa
 
 | Zona | Nível | Monstros |
 |---|---|---|
-| 🏘️ Vila de Trifort | Qualquer | Hub com loja e estalagem |
-| 🌾 Arredores da Vila | 1–5 | Rato, Goblin, Slime, Cogumelo, Corvo |
-| 🌲 Floresta Sombria | 4–9 | Lobo, Orc, Troll, Harpia, Lobisomem |
-| 💎 Caverna de Cristal | 8–13 | Morcego, Aranha, Golem, Cavaleiro Morto-Vivo |
-| 🏚️ Masmorra Antiga | 13–18 | Demônio, Necromante, Lorde Vampiro, Lich |
-| 🏔️ Pico dos Dragões | 17–20 | Dragão Jovem, Dragão Ancião, Wyvern, Fênix |
-
----
+| 🏘️ Vila de Trifort | Qualquer | Hub: loja e estalagem |
+| 🌾 Arredores da Vila | 1–5 | Rato, Goblin, Slime |
+| 🌲 Floresta Sombria | 4–9 | Lobo, Orc, Troll, Harpia |
+| 💎 Caverna de Cristal | 8–13 | Morcego, Aranha, Golem, Morto-Vivo |
+| 🏚️ Masmorra Antiga | 13–18 | Demônio, Necromante, Vampiro, Lich |
+| 🏔️ Pico dos Dragões | 17–100 | Dragão Jovem, Ancião, Wyvern, Fênix |
 
 ### Sistema de energia ⚡
 
-Energia é o recurso central — toda ação consome 1⚡.
-
 | Ação | Custo |
 |---|---|
-| Viajar para outra zona | 1⚡ |
+| Viajar entre zonas | 1⚡ |
 | Iniciar combate | 1⚡ |
 | Andar em masmorra | 1⚡ |
 | Tick de caça automática | 1⚡ |
 
-**Regeneração passiva** — baseada em timestamp (`last_energy_update`) e consolidada por worker central em lote, mantendo compatibilidade com tick por interação:
-
 | Status | Máximo | Regeneração |
 |---|---|---|
-| Normal | 100 + (nível − 1) × 2 | 1⚡ / 10 min |
-| 👑 VIP | 200 + (nível − 1) × 4 | 1⚡ / 5 min |
+| Normal | 100 + (nível−1)×2 | 1⚡ / 10 min |
+| 👑 VIP | 200 + (nível−1)×4 | 1⚡ / 5 min |
 
----
+### Combate (sistema d20 modular)
 
-### Combate
-
-Combate por turnos contra monstros sorteados na zona.
-
-1. Acessa "🗺️ Explorar" → 1 monstro sorteado entre os disponíveis na zona
+1. Explorar → 1 monstro sorteado na zona
 2. Por turno: **Atacar** / **Habilidade** / **Item** / **Fugir**
-3. Vitória: XP + ouro + chance de drop
-4. Derrota: perde XP e ouro proporcionais ao nível, retorna à Vila
+3. Vitória: XP + ouro + chance de drop + efeito de talento/raça
+4. Derrota: perde XP e ouro proporcionais, retorna à Vila
 
-Efeitos de combate ativos:
-- Veneno (DoT em player/monstro), queimadura, debuffs de CA/ataque, buffs defensivos/ofensivos e manipulação de crítico.
-- Aplicação consistente em exploração, PvP, masmorra e auto-caça.
+**Efeitos de status (engine/status_engine.go):**
+Veneno, Queimadura, Congelamento, Atordoamento, Cegueira, Berserk, Escudo, Pressa, Regeneração, Maldição, Silêncio, Proteção — com DoT/HoT, duração em turnos e modificadores de dano/precisão.
 
----
-
-### Masmorras
-
-Sequências de andares com dificuldade crescente, cada andar custa 1⚡. A recompensa final inclui ouro escalado e itens raros. Os recordes são salvos em `dungeon_best`.
-Com `DUNGEON_PROCEDURAL_ENABLED=true`, cada run gera automaticamente entre 5 e 10 salas (`monster/treasure/trap/elite/boss`) de forma determinística por sessão.
+**IA adaptativa dos monstros:**
+Monstros aprendem com o comportamento do jogador. Se a maioria das ações for mágica, o monstro ganha resistência mágica. Se for física, ganha counterataque. Monstros veteranos usam árvore de comportamento (Behavior Tree) com enrage, cura e habilidades especiais.
 
 ---
 
-### PvP
+## Sistemas avançados
 
-Duelos 1v1 com aposta de ouro. O desafiado tem 5 minutos para aceitar. Combate automático sem gasto de ⚡. Rating Elo atualizado em `pvp_stats`.
+### Economia controlada
 
----
+O `EconomyManager` rastreia todo o ouro em circulação. Quando detecta inflação:
 
-### Economia
+| Nível | Gatilho (ouro/jogador) | Efeito |
+|---|---|---|
+| Normal | < 50.000 | Drop e preços padrão |
+| ⚠️ Aviso | ≥ 50.000 | Drop −30%, preços +30% |
+| 🚨 Crítico | ≥ 200.000 | Drop −60%, preços +80%, taxas dobradas |
 
-**Ouro 🪙** — obtido em combate e venda de itens. Usado na loja para equipamentos.
+Todo ouro destruído (reparos, taxas, leilões) é registrado como **gold sink** e reduz a circulação automaticamente.
 
-**Diamantes 💎** — moeda premium. Obtida via bônus diário, drops raros ou compra por Pix. Usada para VIP e loja premium.
+### Mercado entre jogadores
 
-**Materiais de Progressão 🧱** — usados em forja e crafting:
-- Pedra de Forja
-- Pedra Refinada
-- Essência Arcana
-- Fragmento de Monstro
-- Metal Negro
+- **Listagem:** postar item à venda (máx. 10 listagens ativas, taxa de 1% na postagem)
+- **Compra direta:** o comprador paga o preço anunciado menos 5% de imposto
+- **Leilão:** lances progressivos com buy-it-now opcional; 8% de imposto sobre o lance vencedor
+- **Taxa durante inflação:** duplica automaticamente para destruir ouro mais rapidamente
 
----
+### Guildas
 
-### Forja
+| Recurso | Descrição |
+|---|---|
+| Criação | Qualquer jogador pode fundar uma guilda |
+| Hierarquia | Líder → Oficial → Membro → Recruta |
+| Banco | Depósito/saque com rastreamento de contribuição por membro |
+| Nível (1–10) | Sobe com XP de guilda; desbloqueia +membros, perks e slots de território |
+| Perks passivos | +3% XP/nível, +2% ouro/nível, +1% drop rate/nível |
+| Buffs temporários | Bênção do Sábio (+30% XP 2h), Febre do Ouro (+40% gold 2h), Sinfonia da Vitória (+30% ATK 5t) |
+
+### Guerras de guilda e territórios
+
+4 territórios capturáveis com bônus de renda passiva:
+
+| Território | Renda/hora | Bônus XP | Multiplicador de recurso |
+|---|---|---|---|
+| 🌲 Floresta Sombria | 50🪙 | +10% | ×1.2 |
+| 🏰 Fortaleza de Ferro | 100🪙 | +5% | ×1.5 |
+| 🏛️ Templo Submerso | 80🪙 | +15% | ×1.1 |
+| 🐉 Pico do Dragão | 200🪙 | +20% | ×2.0 |
+
+Guerra tem aviso de 30 minutos, duração de 1 hora e liquidação automática.
+
+### Bosses Mundiais
+
+Spawn automático a cada **12 horas** (janela de 30 minutos para derrota):
+
+| Boss | Nível | Elemento | Fraqueza | Drop garantido |
+|---|---|---|---|---|
+| 🌀 Tormenta | 50 | Trevas | Sagrado | tormenta_shard |
+| 🦂 Rei Escorpião | 30 | Veneno | Fogo | poison_gland |
+| 🐲 Dragão de Gelo | 45 | Gelo | Fogo | dragon_scale |
+
+O HP do boss **escala** com o número de participantes (+60% por jogador adicional, máx. ×10). As recompensas são ranqueadas pelo dano causado — top 3 têm chance de item lendário.
+
+### Raids
+
+Raid de múltiplos estágios para grupos de 5–20 jogadores:
+
+- **Raid: Núcleo da Tormenta** — 3 fases (Rei Escorpião → Dragão de Gelo → Tormenta)
+- Cada fase tem mecânica especial (veneno em área, onda de gelo, dano dobrado)
+- Recompensas ranqueadas por dano + token de raid garantido
+
+### PvP Arena
+
+- **Matchmaking:** fila com janela de rating ±100 (expande +25 a cada 30s de espera)
+- **Sistema Elo:** K=32, rating inicial 1000
+- **Divisões:** Bronze → Prata → Ouro → Platina → Mestre → Lendário → 🏆 Imortal
+- **Forfeit:** jogador pode se render a qualquer momento
+
+### Temporadas
+
+Cada temporada dura **3 meses** com tema diferente e boss em destaque. Ao encerrar:
+- Rankings e ratings PvP resetam (soft-reset: metade da distância ao padrão)
+- Jogadores recebem recompensas baseadas no tier final
+
+| Tier | Rating mín. | 💎 Diamantes | Título |
+|---|---|---|---|
+| 🏆 Imortal | 2400 | 500 | Imortal + coroa exclusiva |
+| 💎 Lendário | 2000 | 300 | Lendário + capa exclusiva |
+| 🥇 Mestre | 1600 | 200 | Mestre + distintivo |
+| 🥈 Platina | 1300 | 100 | Platina + anel |
+| 🥉 Ouro | 1100 | 50 | Ouro + amuleto |
+| ⚔️ Prata | 900 | 25 | Prata + skin de espada |
+| 🗡️ Bronze | 0 | 10 | Bronze + skin de escudo |
+
+### Forja e Crafting
 
 Equipamentos podem ser aprimorados de `+1` até `+10`.
 
-| Nível alvo | Chance |
-|---|---|
-| +1 | 100% |
-| +2 | 90% |
-| +3 | 80% |
-| +4 | 70% |
-| +5 | 60% |
-| +6 | 50% |
-| +7 | 40% |
-| +8 | 30% |
-| +9 | 20% |
-| +10 | 10% |
+| Nível alvo | Chance | Risco de quebra |
+|---|---|---|
+| +1 a +4 | 70–100% | Nenhum |
+| +5 a +7 | 40–60% | Sim |
+| +8 a +10 | 10–30% | Alto |
 
-Regras de falha:
-- Até `+4`: falha segura (não quebra).
-- De `+5` em diante: falha pode quebrar item.
-
----
-
-### Crafting
-
-Sistema de receitas com consumo de materiais.
-
-Exemplo:
-- **Espada Negra**
-  - `3x Metal Negro`
-  - `1x Essência Arcana`
-
----
-
-### Drops e exploração
-
-- Drops usam loot tables por contexto (`normal`, `dungeon`, `explore`, `auto_hunt`).
-- Auto-caça aplica multiplicador reduzido para manter balanceamento de economia.
-- Perfil de forja configurável por ambiente:
-  - `legacy10`: +1..+10 (compatibilidade atual)
-  - `classic5`: +1..+5 com chances 100/90/70/50/30 e materiais de minério/essência mágica
-- Base para exploração aleatória pronta com eventos:
-  - monstro
-  - tesouro
-  - evento raro
-  - nada
-
----
+Crafting usa receitas com consumo de materiais (Pedra de Forja, Metal Negro, Essência Arcana, etc.).
 
 ### Sistema VIP
 
@@ -452,33 +415,27 @@ Exemplo:
 | 90 dias | 1.200 💎 | 90 dias |
 | Permanente | 3.000 💎 | Vitalício |
 
-**Benefícios VIP:**
-- Energia máxima dobrada
-- Regeneração 2× mais rápida
-- 🤖 Caça automática (offline hunting)
-
-**Caça automática:** o jogador seleciona uma zona e inicia a sessão. O progresso é processado em modo offline por ciclos de 60s com base no `last_tick_at` quando o jogador abre painel/relatório/stop. Cada ciclo consome 1⚡, sorteia monstro, simula combate e credita recompensas. Para automaticamente se energia zerar, personagem morrer ou VIP expirar.
+**Benefícios:** energia máxima dobrada, regeneração 2× mais rápida, 🤖 caça automática offline.
 
 ---
 
 ## Comandos de GM
 
-Apenas usuários com ID listado em `GM_IDS` têm acesso. O comando `/gm` sem argumentos abre um painel interativo com botões.
+Apenas IDs listados em `GM_IDS` têm acesso. O comando `/gm` abre painel interativo.
 
 | Comando | Descrição |
 |---|---|
 | `/gm buscar <nome>` | Busca personagem por nome |
 | `/gm info <nome>` | Ficha completa do personagem |
-| `/gm id <telegramID>` | Lookup por ID do Telegram |
+| `/gm id <telegramID>` | Lookup por ID Telegram |
 | `/gm ban <nome> [razão]` | Bane jogador |
 | `/gm unban <nome>` | Desbane jogador |
-| `/gm diamond <nome> <+N/-N>` | Adiciona ou remove diamantes |
-| `/gm gold <nome> <+N/-N>` | Adiciona ou remove ouro |
-| `/gm vip <nome> <dias>` | Concede VIP (`0` = permanente, `-1` = revogar) |
+| `/gm diamond <nome> <+N/-N>` | Adiciona/remove diamantes |
+| `/gm gold <nome> <+N/-N>` | Adiciona/remove ouro |
+| `/gm vip <nome> <dias>` | Concede VIP (0=permanente, -1=revogar) |
 | `/gm pix` | Lista pagamentos Pix recentes |
 
-Painel inline de GM também inclui ações rápidas por personagem: `+50 energia`, `teleporte`, `spawn item/material`, `reset de dungeon`, visualização de inventário/equipados e histórico econômico.
-Todas as ações administrativas relevantes são auditadas em `gm_action_logs`.
+Todas as ações são auditadas em `gm_action_logs`.
 
 ---
 
@@ -487,22 +444,71 @@ Todas as ações administrativas relevantes são auditadas em `gm_action_logs`.
 **Fluxo:**
 1. Jogador escolhe pacote de diamantes
 2. Bot gera cobrança via AbacatePay e exibe QR Code Pix
-3. Jogador paga → AbacatePay envia webhook `POST /pix/webhook` (opcionalmente validado por `X-AbacatePay-Secret`)
-4. Bot confirma em `pix_payments` e credita diamantes
+3. Jogador paga → AbacatePay envia `POST /pix/webhook`
+4. Bot confirma e credita diamantes (idempotente — sem crédito duplicado)
 
-**Fallback:** sem webhook configurado, o bot faz polling a cada 15 segundos automaticamente.
-
-O fluxo de confirmação usa idempotência transacional no banco (`UPDATE ... WHERE status='pending' RETURNING ...`), evitando crédito duplicado em concorrência.
-
-**Webhook no painel AbacatePay:** `https://seu-dominio.com/pix/webhook`
-
-**Endpoints HTTP:**
+**Fallback:** polling automático a cada 15s se webhook não estiver configurado.
 
 | Endpoint | Descrição |
 |---|---|
 | `GET /health` | Health check |
 | `POST /pix/webhook` | Notificações AbacatePay |
 | `POST /mp/webhook` | Alias de compatibilidade |
+
+---
+
+## Arquitetura técnica
+
+### Princípios
+
+- **Funções puras** no `engine/` e `rpg/` — sem acesso a BD, fáceis de testar
+- **Separação de domínio** — cada pacote tem responsabilidade única
+- **Extensível sem quebrar** — todos os novos módulos são aditivos (nenhum arquivo existente foi modificado na expansão MMORPG)
+- **Event-driven** — sistemas comunicam via `eventbus.Global` (pub/sub assíncrono)
+
+### Barramento de eventos (`internal/eventbus/`)
+
+```go
+// Publicar
+eventbus.Pub(eventbus.NewEvent(eventbus.KindPlayerLevelUp).
+    WithPlayer(charID).
+    WithInt(newLevel))
+
+// Subscrever
+eventbus.Sub(eventbus.KindBossKilled, func(e eventbus.Event) {
+    // reagir ao boss morto
+})
+```
+
+30+ eventos: `PLAYER_LEVEL_UP`, `BOSS_KILLED`, `GUILD_WAR_ENDED`, `INFLATION_CRITICAL`, `SEASON_ENDED`, `TRADE_COMPLETED`…
+
+Pool de **8 goroutines**, fila de **10.000 slots** — sem bloqueio do loop principal.
+
+### Cache (`internal/cache/`)
+
+Interface `Cache` com `Set/Get/Delete/Incr/ZSet/ZTopN/Lock/Unlock`.
+
+- Sem Redis: `MemCache` em memória (padrão, zero dependências extras)
+- Com Redis: definir `REDIS_ADDR` e injetar um adapter Redis no `cache.Global`
+
+### Workers de background
+
+| Worker | Intervalo | Responsabilidade |
+|---|---|---|
+| `EconomyWorker` | 10 min | Snapshot, eventos de inflação, cache |
+| `RaidWorker` | 5 min | Spawn/expiração de boss mundial |
+| `EventWorker` | Reativo | Reage ao eventbus, broadcast Telegram |
+| `CombatPool` | Assíncrono | 16 goroutines para combate pesado |
+
+### Escalabilidade
+
+| Componente | Capacidade atual | Caminho para 1M jogadores |
+|---|---|---|
+| Update workers | Configurável (`UPDATE_WORKERS`) | Horizontal (múltiplas instâncias) |
+| Combat pool | 16 workers, 1000 jobs | Aumentar via env ou Redis queue |
+| Event bus | 8 workers, 10k fila | Redis pub/sub para multi-instância |
+| Cache | MemCache in-process | Trocar por Redis (interface já existe) |
+| DB | PostgreSQL | Connection pool, read replicas, sharding |
 
 ---
 
@@ -515,7 +521,7 @@ docker compose up -d --build
 # Health check
 curl http://localhost:8080/health
 
-# Logs
+# Logs ao vivo
 docker compose logs -f bot
 
 # Restart apenas do bot
@@ -527,80 +533,47 @@ docker compose down
 
 Volumes persistentes: `postgres_data` (banco) e `bot_assets` (imagens geradas).
 
-### Atualizar sem apagar dados
+### Atualizar sem perder dados
 
-Os dados do banco ficam no volume `postgres_data`, então você **não** precisa apagar containers/images para atualizar.
-
-Foram adicionados scripts de atualização com:
-- backup automático do PostgreSQL
-- pull/restart do PostgreSQL
-- rebuild do bot
-- execução opcional de migração
-
-#### Windows (PowerShell)
+```bash
+# Linux/macOS
+chmod +x scripts/update.sh
+./scripts/update.sh                                          # padrão (com backup)
+./scripts/update.sh --migrate-latest                         # aplica última migration
+./scripts/update.sh --migration migrations/021_energy_tick_index.sql
+```
 
 ```powershell
-# Atualização padrão (com backup)
+# Windows PowerShell
 .\scripts\update.ps1
-
-# Atualizar e aplicar migration específica
-.\scripts\update.ps1 -Migration migrations/014_shield_offhand_slot.sql
-
-# Atualizar e aplicar o arquivo .sql mais recente
 .\scripts\update.ps1 -MigrateLatest
 ```
 
-#### Linux/macOS (Bash)
+Backups ficam em `./backups/` no formato `pg_<database>_YYYYMMDD_HHMMSS.sql`.
+
+### Restaurar backup
 
 ```bash
-# Dar permissão uma vez
-chmod +x scripts/update.sh
-
-# Atualização padrão (com backup)
-./scripts/update.sh
-
-# Atualizar e aplicar migration específica
-./scripts/update.sh --migration migrations/014_shield_offhand_slot.sql
-
-# Atualizar e aplicar o .sql mais recente
-./scripts/update.sh --migrate-latest
-```
-
-#### Onde ficam os backups
-
-- Pasta: `./backups`
-- Formato: `pg_<database>_YYYYMMDD_HHMMSS.sql`
-
-#### Como restaurar um backup
-
-```bash
-# Exemplo Linux/macOS
-cat backups/pg_tormenta_rpg_20260304_120000.sql | docker compose exec -T postgres psql -U tormenta -d tormenta_rpg
-```
-
-```powershell
-# Exemplo Windows PowerShell
-Get-Content backups\pg_tormenta_rpg_20260304_120000.sql | docker compose exec -T postgres psql -U tormenta -d tormenta_rpg
+cat backups/pg_tormenta_rpg_20260308_120000.sql | \
+  docker compose exec -T postgres psql -U tormenta -d tormenta_rpg
 ```
 
 ---
 
 ## Deploy manual
 
-### Pré-requisitos: Go 1.21+ e PostgreSQL 16+
-
 ```bash
-# Build
+# Pré-requisitos: Go 1.21+ e PostgreSQL 16+
+
 go mod download
 go build -o tormenta-bot ./cmd/bot/main.go
 
-# Banco
 psql -U postgres -c "CREATE USER tormenta WITH PASSWORD 'tormenta123';"
 psql -U postgres -c "CREATE DATABASE tormenta_rpg OWNER tormenta;"
 for f in migrations/*.sql; do psql -U tormenta -d tormenta_rpg -f "$f"; done
 
-# Executar
-cp .env.example .env && ./tormenta-bot
+cp .env.example .env
+./tormenta-bot
 ```
 
 ### Systemd
