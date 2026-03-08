@@ -4,6 +4,8 @@ Bot MMORPG multiplayer para Telegram, inspirado no sistema Tormenta 20. Combate 
 
 Arquitetura modular escrita em Go, projetada para escalar de centenas a **1 milhão de jogadores**.
 
+> **Conteúdo gerado:** 120 habilidades · 750+ itens · 59+ monstros · 10 classes · 7 raças — do nível 1 ao 100.
+
 ---
 
 ## Índice
@@ -15,11 +17,12 @@ Arquitetura modular escrita em Go, projetada para escalar de centenas a **1 milh
 5. [Estrutura do projeto](#estrutura-do-projeto)
 6. [Gameplay](#gameplay)
 7. [Sistemas avançados](#sistemas-avançados)
-8. [Comandos de GM](#comandos-de-gm)
-9. [Pagamentos Pix](#pagamentos-pix-abacatepay)
-10. [Arquitetura técnica](#arquitetura-técnica)
-11. [Deploy com Docker](#deploy-com-docker)
-12. [Deploy manual](#deploy-manual)
+8. [Dados RPG gerados (rpgdata)](#dados-rpg-gerados-rpgdata)
+9. [Comandos de GM](#comandos-de-gm)
+10. [Pagamentos Pix](#pagamentos-pix-abacatepay)
+11. [Arquitetura técnica](#arquitetura-técnica)
+12. [Deploy com Docker](#deploy-com-docker)
+13. [Deploy manual](#deploy-manual)
 
 ---
 
@@ -175,9 +178,19 @@ tormenta-bot/
 │   │   ├── economy_worker.go      # Snapshot + eventos de inflação a cada 10 min
 │   │   ├── event_worker.go        # Reage ao eventbus, broadcast Telegram
 │   │   └── raid_worker.go         # Spawn/expiração de boss mundial
+│   ├── rpgdata/                   # Biblioteca de dados RPG nível 1–100 (pura, sem I/O)
+│   │   ├── tiers.go               # 5 tiers de item, 4 de habilidade, funções de escala
+│   │   ├── xp_curve.go            # Tabela XP lv1-100, milestones, fórmula suave
+│   │   ├── races.go               # 7 raças com stats e traços
+│   │   ├── classes.go             # 10 classes com HP/MP/nível e traços
+│   │   ├── skills.go              # 120 habilidades geradas (10 classes × 3 ramos × 4 tiers)
+│   │   ├── skill_tree.go          # SkillTree/Branch/SkillNode, CanUnlock()
+│   │   ├── items.go               # 750+ itens gerados (25 templates × 5 tiers × 6 raridades)
+│   │   └── monsters.go            # 59+ monstros gerados (13 arquétipos × bandas de nível)
 │   ├── game/                      # Lógica de jogo principal (existente, preservado)
 │   │   ├── combat.go              # Engine de combate por turnos (d20)
-│   │   ├── data.go                # Raças, classes, monstros, mapas, itens
+│   │   ├── data.go                # Raças, classes, monstros, mapas, itens (legado)
+│   │   ├── rpgdata_loader.go      # init(): mescla rpgdata nos mapas game.Items/Skills/Monsters
 │   │   ├── dungeon_logic.go       # Lógica de masmorras
 │   │   ├── energy.go              # Sistema de energia e regeneração
 │   │   ├── pvp_game.go            # Lógica de PvP
@@ -230,6 +243,8 @@ tormenta-bot/
 | ✝️ Clérigo | Curandeiro | 55 | 75 | Graça Divina (10% curas duplas, imune a Curse) |
 | 🪓 Bárbaro | DPS brutal | 90 | 10 | Fúria Bárbara (+60% ATK em Berserk) |
 | 🎵 Bardo | Suporte | 58 | 60 | Inspiração (+15% XP da party pós-batalha) |
+| 🌿 Druida | Suporte/DPS | 60 | 70 | Forma Selvagem (metamorfose em combate) |
+| 💀 Necromante | Conjurador | 48 | 95 | Senhor dos Mortos (invoca mortos-vivos por turno) |
 
 ### Progressão (nível 1–100)
 
@@ -249,11 +264,16 @@ A cada **4 níveis** os dois atributos primários da classe sobem +1. A cada **1
 
 Cada classe possui ramos de especialização com nós de Tier 1 a 4. Habilidades têm pré-requisitos, custo em pontos de habilidade e pré-requisito de nível. Capstones de Tier 4 são habilidades "ultimate".
 
-Novos ramos disponíveis:
-- **Bárbaro:** Fúria (Berserk, Sede de Sangue, Grito Mortal, Devastação) / Resistência
-- **Paladino:** Sagrado (Golpe Divino, Imposição de Mãos, Escudo Sagrado, Julgamento Divino)
-- **Clérigo:** Cura (Cura, Cura em Área, Ressurreição)
-- **Bardo:** Música (Inspiração, Cantiga do Sono, Sinfonia da Vitória)
+Cada classe possui **3 ramos** com **4 tiers** de habilidades (T1 lv1, T2 lv21, T3 lv41, T4 lv71). As habilidades dentro de um ramo exigem a anterior como pré-requisito. Total: **120 habilidades** geradas automaticamente.
+
+Exemplos de ramos por classe:
+
+- **Guerreiro:** Protetor / Berserker / Duelista
+- **Bárbaro:** Fúria / Selvagem / Resistência
+- **Paladino:** Sagrado / Proteção / Redenção
+- **Clérigo:** Curandeiro / Sagrado / Protetor
+- **Druida:** Natureza / Metamorfose / Cura Natural
+- **Necromante:** Morte / Dreno / Sombra
 
 ### Talentos
 
@@ -416,6 +436,43 @@ Crafting usa receitas com consumo de materiais (Pedra de Forja, Metal Negro, Ess
 | Permanente | 3.000 💎 | Vitalício |
 
 **Benefícios:** energia máxima dobrada, regeneração 2× mais rápida, 🤖 caça automática offline.
+
+---
+
+## Dados RPG gerados (rpgdata)
+
+O pacote `internal/rpgdata` é uma biblioteca de dados pura (sem I/O, sem BD) que gera programaticamente todo o conteúdo escalável do jogo. Os dados são mesclados nos mapas do `game/` via `init()` em `rpgdata_loader.go`, sem modificar nenhum arquivo existente.
+
+### Escala de conteúdo gerado
+
+| Categoria | Quantidade | Método |
+|---|---|---|
+| Habilidades | **120** | 10 classes × 3 ramos × 4 tiers |
+| Itens | **750+** | 25 templates × 5 tiers × 6 raridades |
+| Monstros | **59+** | 13 arquétipos × bandas de nível |
+| Raças | 7 | Definidas manualmente |
+| Classes | 10 | Definidas manualmente |
+
+### Raridades de itens
+
+| Raridade | Multiplicador de stat | Peso de drop |
+|---|---|---|
+| ⚪ Comum | ×1,00 | 60 |
+| 🟢 Incomum | ×1,30 | 25 |
+| 🔵 Raro | ×1,70 | 10 |
+| 🟣 Épico | ×2,30 | 4 |
+| 🟡 Lendário | ×3,20 | 1 |
+| 🔴 Mítico | ×4,50 | 0 (drop manual) |
+
+### Tiers de item vs. nível
+
+| Tier | Nome | Faixa | Multiplicador |
+|---|---|---|---|
+| 1 | Aprendiz 🪨 | lv 1–20 | ×1,0 |
+| 2 | Veterano 🔩 | lv 21–40 | ×2,5 |
+| 3 | Mestre ⚙️ | lv 41–60 | ×5,0 |
+| 4 | Élite 💎 | lv 61–80 | ×9,0 |
+| 5 | Lendário 🌌 | lv 81–100 | ×14,0 |
 
 ---
 
