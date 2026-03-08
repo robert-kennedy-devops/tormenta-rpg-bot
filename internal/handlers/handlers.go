@@ -165,6 +165,18 @@ func screenFromCallback(data string) string {
 	case strings.HasPrefix(data, "sell_"):
 		// inclui sell_tab_, sell_item_, sell_back_, sell_add_, checkout...
 		return "menu_sell"
+	case data == "menu_guild",
+		strings.HasPrefix(data, "guild_"),
+		strings.HasPrefix(data, "gwar_"):
+		return "menu_guild"
+	case data == "menu_market",
+		strings.HasPrefix(data, "market_"),
+		strings.HasPrefix(data, "auction_"):
+		return "menu_market"
+	case data == "menu_worldboss",
+		strings.HasPrefix(data, "worldboss_"),
+		strings.HasPrefix(data, "raid_"):
+		return "menu_worldboss"
 	}
 	return ""
 }
@@ -650,6 +662,57 @@ func HandleCallback(cb *tgbotapi.CallbackQuery) {
 	case data == "pvp_continue":
 		handlePVPContinue(chatID, msgID, userID)
 
+	// ── GUILD ───────────────────────────────────────────
+	case data == "menu_guild":
+		showGuildMenu(chatID, msgID, userID)
+	case data == "guild_members":
+		showGuildMembers(chatID, msgID, userID)
+	case data == "guild_bank":
+		showGuildBank(chatID, msgID, userID)
+	case data == "guild_war":
+		showGuildWar(chatID, msgID, userID)
+	case data == "guild_buffs":
+		showGuildBuffs(chatID, msgID, userID)
+	case data == "guild_info":
+		showGuildInfo(chatID, msgID, userID)
+	case data == "guild_leave":
+		handleGuildLeave(chatID, msgID, userID)
+	case data == "guild_leave_confirm":
+		handleGuildLeaveConfirm(chatID, msgID, userID)
+	case data == "guild_create":
+		handleGuildCreate(chatID, msgID, userID)
+	case strings.HasPrefix(data, "guild_bank_dep_"):
+		amount := strings.TrimPrefix(data, "guild_bank_dep_")
+		handleGuildBankDeposit(chatID, msgID, userID, amount)
+	case strings.HasPrefix(data, "gwar_attack_"):
+		handleGuildWarAttack(chatID, msgID, userID, strings.TrimPrefix(data, "gwar_attack_"))
+
+	// ── MARKET ──────────────────────────────────────────
+	case data == "menu_market":
+		showMarketMenu(chatID, msgID, userID)
+	case data == "market_browse":
+		showMarketBrowse(chatID, msgID, userID)
+	case data == "market_mine":
+		showMyListings(chatID, msgID, userID)
+	case data == "market_auctions":
+		showAuctionsMenu(chatID, msgID, userID)
+	case data == "market_auctions_list":
+		showActiveAuctions(chatID, msgID, userID)
+	case strings.HasPrefix(data, "market_cat_"):
+		showMarketCategory(chatID, msgID, userID, strings.TrimPrefix(data, "market_cat_"))
+
+	// ── WORLD BOSS ──────────────────────────────────────
+	case data == "menu_worldboss":
+		showWorldBossMenu(chatID, msgID, userID)
+	case data == "worldboss_attack":
+		handleWorldBossAttack(chatID, msgID, userID)
+	case data == "worldboss_status":
+		showWorldBossStatus(chatID, msgID, userID)
+	case data == "worldboss_leaderboard":
+		showWorldBossLeaderboard(chatID, msgID, userID)
+	case strings.HasPrefix(data, "raid_join_"):
+		handleRaidJoin(chatID, msgID, userID, strings.TrimPrefix(data, "raid_join_"))
+
 	// ── RANK ────────────────────────────────────────────
 	case data == "menu_rank":
 		showRankMenu(chatID, msgID, userID)
@@ -701,13 +764,19 @@ func startCharacterCreation(chatID int64, msgID int, userID int64) {
 	elf := game.Races["elf"]
 	dwarf := game.Races["dwarf"]
 	halforc := game.Races["halforc"]
+	goblin := game.Races["goblin"]
+	qareen := game.Races["qareen"]
+	minotaur := game.Races["minotaur"]
 
 	caption := "🧬 *Escolha sua Raça*\n\n" +
 		"Cada raça define seus atributos base e habilidade racial única.\n\n" +
 		fmt.Sprintf("%s *Humano* — _%s_\n  ✨ _%s_\n\n", human.Emoji, human.Description, human.Trait) +
 		fmt.Sprintf("%s *Elfo* — _%s_\n  ✨ _%s_\n\n", elf.Emoji, elf.Description, elf.Trait) +
 		fmt.Sprintf("%s *Anão* — _%s_\n  ✨ _%s_\n\n", dwarf.Emoji, dwarf.Description, dwarf.Trait) +
-		fmt.Sprintf("%s *Meio-Orc* — _%s_\n  ✨ _%s_", halforc.Emoji, halforc.Description, halforc.Trait)
+		fmt.Sprintf("%s *Meio-Orc* — _%s_\n  ✨ _%s_\n\n", halforc.Emoji, halforc.Description, halforc.Trait) +
+		fmt.Sprintf("%s *Goblin* — _%s_\n  ✨ _%s_\n\n", goblin.Emoji, goblin.Description, goblin.Trait) +
+		fmt.Sprintf("%s *Qareen* — _%s_\n  ✨ _%s_\n\n", qareen.Emoji, qareen.Description, qareen.Trait) +
+		fmt.Sprintf("%s *Minotauro* — _%s_\n  ✨ _%s_", minotaur.Emoji, minotaur.Description, minotaur.Trait)
 
 	kb := menukit.RaceSelect()
 	editPhoto(chatID, msgID, "welcome", caption, &kb)
@@ -723,6 +792,10 @@ func handleRaceSelect(chatID int64, msgID int, userID int64, race string) {
 	mage := game.Classes["mage"]
 	rogue := game.Classes["rogue"]
 	archer := game.Classes["archer"]
+	paladin := game.Classes["paladin"]
+	cleric := game.Classes["cleric"]
+	barbarian := game.Classes["barbarian"]
+	bard := game.Classes["bard"]
 
 	caption := fmt.Sprintf(
 		"%s *%s* selecionado!\n\n📖 _%s_\n✨ Traço: *%s*\n\n"+
@@ -731,7 +804,11 @@ func handleRaceSelect(chatID int64, msgID int, userID int64, race string) {
 			"%s *Guerreiro* — _%s_\n_%s_\n\n"+
 			"%s *Mago* — _%s_\n_%s_\n\n"+
 			"%s *Ladino* — _%s_\n_%s_\n\n"+
-			"%s *Arqueiro* — _%s_\n_%s_",
+			"%s *Arqueiro* — _%s_\n_%s_\n\n"+
+			"%s *Paladino* — _%s_\n_%s_\n\n"+
+			"%s *Clérigo* — _%s_\n_%s_\n\n"+
+			"%s *Bárbaro* — _%s_\n_%s_\n\n"+
+			"%s *Bardo* — _%s_\n_%s_",
 		r.Emoji, r.Name, r.Description, r.Trait,
 		r.BonusStr, r.BonusDex, r.BonusCon, r.BonusInt, r.BonusWis, r.BonusCha,
 		r.BonusHP, r.BonusMP,
@@ -739,6 +816,10 @@ func handleRaceSelect(chatID int64, msgID int, userID int64, race string) {
 		mage.Emoji, mage.Description, fmt.Sprintf("💙%d MP | 🎯 Papel: %s", mage.BaseMP, mage.Role),
 		rogue.Emoji, rogue.Description, fmt.Sprintf("❤️%d HP | 🎯 Papel: %s", rogue.BaseHP, rogue.Role),
 		archer.Emoji, archer.Description, fmt.Sprintf("❤️%d HP | 🎯 Papel: %s", archer.BaseHP, archer.Role),
+		paladin.Emoji, paladin.Description, fmt.Sprintf("❤️%d HP | 🎯 Papel: %s", paladin.BaseHP, paladin.Role),
+		cleric.Emoji, cleric.Description, fmt.Sprintf("💙%d MP | 🎯 Papel: %s", cleric.BaseMP, cleric.Role),
+		barbarian.Emoji, barbarian.Description, fmt.Sprintf("❤️%d HP | 🎯 Papel: %s", barbarian.BaseHP, barbarian.Role),
+		bard.Emoji, bard.Description, fmt.Sprintf("❤️%d HP | 🎯 Papel: %s", bard.BaseHP, bard.Role),
 	)
 	kb := menukit.ClassSelect()
 	editPhoto(chatID, msgID, assets.RaceImageKey(race), caption, &kb)

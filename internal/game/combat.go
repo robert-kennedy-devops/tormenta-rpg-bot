@@ -346,7 +346,7 @@ func CheckLevelUp(char *models.Character) *LevelUpResult {
 	if char.Experience < char.ExperienceNext {
 		return nil
 	}
-	if char.Level >= 20 {
+	if char.Level >= 100 {
 		return nil
 	}
 	class := Classes[char.Class]
@@ -355,7 +355,7 @@ func CheckLevelUp(char *models.Character) *LevelUpResult {
 		NewLevel:    newLevel,
 		HPGained:    class.HPPerLevel + char.Constitution/3,
 		MPGained:    class.MPPerLevel + char.Intelligence/5,
-		SkillPoints: 1, // +1 ponto por nível (total 19 ao longo de lv1→20)
+		SkillPoints: 1, // +1 ponto por nível (total 99 ao longo de lv1→100)
 	}
 }
 
@@ -385,6 +385,19 @@ func ApplyLevelUp(char *models.Character, result *LevelUpResult) {
 		case "archer":
 			char.Dexterity += 2
 			char.Wisdom += 1
+		case "paladin":
+			char.Strength += 1
+			char.Constitution += 1
+			char.Charisma += 1
+		case "cleric":
+			char.Wisdom += 2
+			char.Constitution += 1
+		case "barbarian":
+			char.Strength += 3
+			char.Constitution += 1
+		case "bard":
+			char.Charisma += 2
+			char.Dexterity += 1
 		}
 	}
 }

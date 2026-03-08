@@ -9,6 +9,9 @@ import (
 	"github.com/tormenta-bot/internal/handlers"
 	"github.com/tormenta-bot/internal/services/payment"
 	"github.com/tormenta-bot/internal/systems/events"
+	"github.com/tormenta-bot/internal/economy"
+	newworkers "github.com/tormenta-bot/internal/workers"
+	"github.com/tormenta-bot/internal/world"
 )
 
 type Manager struct {
@@ -34,6 +37,17 @@ func (m *Manager) Start(enablePixPolling bool) {
 	if enablePixPolling {
 		go m.pixWorker(15 * time.Second)
 	}
+
+	// New MMORPG workers
+	raidWorker := newworkers.NewRaidWorker(world.Global, 5*time.Minute)
+	raidWorker.Start()
+
+	economyWorker := newworkers.NewEconomyWorker(economy.Global, 10*time.Minute)
+	economyWorker.Start()
+
+	newworkers.GlobalCombatPool.Start()
+
+	log.Println("[Manager] New MMORPG workers started: RaidWorker, EconomyWorker, CombatPool")
 }
 
 func (m *Manager) autoHuntWorker(interval time.Duration) {

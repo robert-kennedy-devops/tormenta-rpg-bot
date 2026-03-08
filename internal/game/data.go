@@ -36,6 +36,27 @@ var Races = map[string]models.Race{
 		BonusStr: 4, BonusDex: 0, BonusCon: 3, BonusInt: -1, BonusWis: 0, BonusCha: -1,
 		Trait: "Fúria do Sangue: +25% de dano físico",
 	},
+	"goblin": {
+		ID: "goblin", Name: "Goblin", Emoji: "👺",
+		Description: "Pequenos e astutos, especialistas em emboscadas.",
+		BonusHP:     5, BonusMP: 10,
+		BonusStr: -1, BonusDex: 4, BonusCon: 0, BonusInt: 2, BonusWis: 0, BonusCha: 0,
+		Trait: "Esperteza: +15% de ouro encontrado",
+	},
+	"qareen": {
+		ID: "qareen", Name: "Qareen", Emoji: "🧞",
+		Description: "Seres mágicos do deserto, ligados a forças elementais.",
+		BonusHP:     10, BonusMP: 25,
+		BonusStr: 0, BonusDex: 1, BonusCon: 0, BonusInt: 2, BonusWis: 2, BonusCha: 3,
+		Trait: "Magia Elemental: +20% de dano mágico",
+	},
+	"minotaur": {
+		ID: "minotaur", Name: "Minotauro", Emoji: "🐂",
+		Description: "Guerreiros poderosos com chifres devastadores.",
+		BonusHP:     35, BonusMP: 0,
+		BonusStr: 5, BonusDex: -1, BonusCon: 4, BonusInt: -1, BonusWis: 0, BonusCha: -1,
+		Trait: "Investida: +30% de dano no primeiro ataque do combate",
+	},
 }
 
 // ── CLASSES ───────────────────────────────────────────────
@@ -67,6 +88,34 @@ var Classes = map[string]models.Class{
 		BaseHP:      60, BaseMP: 35, HPPerLevel: 8, MPPerLevel: 5,
 		BaseAttack: 9, BaseDefense: 6,
 		PrimaryStats: []string{"dexterity", "wisdom"}, Role: "ranged",
+	},
+	"paladin": {
+		ID: "paladin", Name: "Paladino", Emoji: "🛡️",
+		Description: "Guerreiro sagrado que combina força e magia divina.",
+		BaseHP:      75, BaseMP: 45, HPPerLevel: 10, MPPerLevel: 7,
+		BaseAttack: 10, BaseDefense: 9,
+		PrimaryStats: []string{"strength", "charisma"}, Role: "tank",
+	},
+	"cleric": {
+		ID: "cleric", Name: "Clérigo", Emoji: "✝️",
+		Description: "Canal divino de cura e proteção.",
+		BaseHP:      55, BaseMP: 70, HPPerLevel: 7, MPPerLevel: 10,
+		BaseAttack: 6, BaseDefense: 7,
+		PrimaryStats: []string{"wisdom", "constitution"}, Role: "support",
+	},
+	"barbarian": {
+		ID: "barbarian", Name: "Bárbaro", Emoji: "🪓",
+		Description: "Guerreiro selvagem movido por fúria incontrolável.",
+		BaseHP:      95, BaseMP: 15, HPPerLevel: 14, MPPerLevel: 2,
+		BaseAttack: 14, BaseDefense: 7,
+		PrimaryStats: []string{"strength", "constitution"}, Role: "dps",
+	},
+	"bard": {
+		ID: "bard", Name: "Bardo", Emoji: "🎵",
+		Description: "Artista versátil que inspira aliados e confunde inimigos.",
+		BaseHP:      50, BaseMP: 55, HPPerLevel: 6, MPPerLevel: 8,
+		BaseAttack: 7, BaseDefense: 5,
+		PrimaryStats: []string{"charisma", "dexterity"}, Role: "support",
 	},
 }
 

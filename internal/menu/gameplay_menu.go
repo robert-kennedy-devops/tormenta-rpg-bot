@@ -12,6 +12,8 @@ func RaceSelect() tgbotapi.InlineKeyboardMarkup {
 	return Keyboard(
 		Row(Btn("👤 Humano", "race_human"), Btn("🧝 Elfo", "race_elf")),
 		Row(Btn("⛏️ Anão", "race_dwarf"), Btn("👹 Meio-Orc", "race_halforc")),
+		Row(Btn("👺 Goblin", "race_goblin"), Btn("🧞 Qareen", "race_qareen")),
+		Row(Btn("🐂 Minotauro", "race_minotaur")),
 	)
 }
 
@@ -19,6 +21,8 @@ func ClassSelect() tgbotapi.InlineKeyboardMarkup {
 	return Keyboard(
 		Row(Btn("⚔️ Guerreiro", "class_warrior"), Btn("🧙 Mago", "class_mage")),
 		Row(Btn("🗡️ Ladino", "class_rogue"), Btn("🏹 Arqueiro", "class_archer")),
+		Row(Btn("🛡️ Paladino", "class_paladin"), Btn("✝️ Clérigo", "class_cleric")),
+		Row(Btn("🪓 Bárbaro", "class_barbarian"), Btn("🎵 Bardo", "class_bard")),
 		Row(Btn("⬅️ Voltar", "create_character")),
 	)
 }

@@ -48,6 +48,13 @@ func MainMenu(opts MainMenuOptions) tgbotapi.InlineKeyboardMarkup {
 			Btn("🏆 Ranking", "menu_rank"),
 			Btn("👑 VIP & Caça Auto", "menu_vip"),
 		),
+		Row(
+			Btn("⚔️ Guildas", "menu_guild"),
+			Btn("🏪 Mercado", "menu_market"),
+		),
+		Row(
+			Btn("🌍 Boss Mundial", "menu_worldboss"),
+		),
 	)
 
 	return Keyboard(rows...)
