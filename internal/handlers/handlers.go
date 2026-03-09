@@ -681,6 +681,8 @@ func HandleCallback(cb *tgbotapi.CallbackQuery) {
 		handleGuildLeaveConfirm(chatID, msgID, userID)
 	case data == "guild_create":
 		handleGuildCreate(chatID, msgID, userID)
+	case data == "guild_search":
+		showGuildSearch(chatID, msgID, userID)
 	case strings.HasPrefix(data, "guild_bank_dep_"):
 		amount := strings.TrimPrefix(data, "guild_bank_dep_")
 		handleGuildBankDeposit(chatID, msgID, userID, amount)
@@ -852,6 +854,10 @@ func handleTextInput(msg *tgbotapi.Message) {
 	}
 
 	userID := msg.From.ID
+
+	if handleGuildNameInput(msg) {
+		return
+	}
 
 	state := creationState[userID]
 	if state == nil || state["awaiting_name"] != "true" {
@@ -3286,9 +3292,23 @@ func showInventoryHome(chatID int64, msgID int, userID int64) {
 		return
 	}
 
+	equipped, _ := database.GetEquippedItems(char.ID)
+	equipSummary := "\n\n⚔️ *Equipado:* _Nenhum_"
+	if len(equipped) > 0 {
+		var parts []string
+		for _, e := range equipped {
+			if item, ok := game.Items[e.ItemID]; ok {
+				parts = append(parts, item.Emoji+" "+item.Name)
+			}
+		}
+		if len(parts) > 0 {
+			equipSummary = "\n\n⚔️ *Equipado:*\n  • " + strings.Join(parts, "\n  • ")
+		}
+	}
+
 	caption := fmt.Sprintf(
-		"🎒 *Inventário de %s*\n🪙 *%d* | 💎 *%d*\n\nSelecione uma categoria:",
-		char.Name, char.Gold, char.Diamonds,
+		"🎒 *Inventário de %s*\n🪙 *%d* | 💎 *%d*%s\n\nSelecione uma categoria:",
+		char.Name, char.Gold, char.Diamonds, equipSummary,
 	)
 
 	kb := menukit.InventoryHomeKeyboard()
@@ -3308,6 +3328,7 @@ func showInventory(chatID int64, msgID int, userID int64, filterType string) {
 		"weapon":     "Armas",
 		"armor":      "Armaduras",
 		"accessory":  "Acessórios",
+		"material":   "Materiais",
 	}
 	tabName := tabNames[filterType]
 	if tabName == "" {

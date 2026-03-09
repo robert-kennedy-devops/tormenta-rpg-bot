@@ -3,7 +3,9 @@ package handlers
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/tormenta-bot/internal/database"
 	"github.com/tormenta-bot/internal/guild"
 	menukit "github.com/tormenta-bot/internal/menu"
@@ -128,6 +130,52 @@ func showGuildWar(chatID int64, msgID int, userID int64) {
 	)
 	kb := menukit.GuildWarMenu()
 	editMsg(chatID, msgID, caption, &kb)
+}
+
+func showGuildSearch(chatID int64, msgID int, _ int64) {
+	caption := "🔍 *Buscar Guilda*\n\n" +
+		"As guildas funcionam por convite.\n\n" +
+		"Para entrar em uma guilda, peça ao líder ou a um oficial que te convide.\n\n" +
+		"_Use ⚔️ Criar Guilda para fundar a sua própria!_"
+	kb := menukit.GuildNoGuild()
+	editMsg(chatID, msgID, caption, &kb)
+}
+
+// handleGuildNameInput processes text input for guild name during creation.
+// Returns true if the input was consumed.
+func handleGuildNameInput(msg *tgbotapi.Message) bool {
+	userID := msg.From.ID
+	state := creationState[userID]
+	if state == nil || state["awaiting_guild_name"] != "true" {
+		return false
+	}
+	name := strings.TrimSpace(msg.Text)
+	if len(name) < 3 || len(name) > 20 {
+		sendText(msg.Chat.ID, "❌ Nome deve ter entre 3 e 20 caracteres. Tente novamente:")
+		return true
+	}
+	char, _ := database.GetCharacter(userID)
+	if char == nil {
+		return true
+	}
+	const createCost = 1000
+	if char.Gold < createCost {
+		sendText(msg.Chat.ID, fmt.Sprintf("❌ Você precisa de *%d* ouro para criar uma guilda.\n\nSeu ouro: *%d*", createCost, char.Gold))
+		delete(creationState[userID], "awaiting_guild_name")
+		return true
+	}
+	g, err := guild.GlobalService.CreateGuild(userID, char.Name, name, "", "")
+	if err != nil {
+		sendText(msg.Chat.ID, "❌ Erro ao criar guilda: "+err.Error())
+		delete(creationState[userID], "awaiting_guild_name")
+		return true
+	}
+	char.Gold -= createCost
+	database.SaveCharacter(char)
+	delete(creationState[userID], "awaiting_guild_name")
+	kb := menukit.MenuOnly()
+	sendMsg(msg.Chat.ID, fmt.Sprintf("⚔️ *Guilda %s criada com sucesso!*\n\nVocê é agora o líder!\n🪙 Ouro restante: *%d*", g.Name, char.Gold), &kb)
+	return true
 }
 
 func showGuildBuffs(chatID int64, msgID int, userID int64) {
