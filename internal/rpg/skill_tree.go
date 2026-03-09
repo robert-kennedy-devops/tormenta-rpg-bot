@@ -27,12 +27,14 @@ type SkillNode struct {
 // engine_Effect is a local alias (avoids import cycles at this layer).
 // The actual engine.Effect is created when the service layer resolves the skill.
 type engine_Effect struct {
-	TypeName    string // "damage" | "heal" | "apply_status" | etc.
+	TypeName    string // "damage" | "heal" | "apply_status" | "stat_buff" | "stat_debuff" | etc.
 	Element     string
 	BasePower   int
 	StatusKind  string
 	StatusTurns int
 	StatusDmgPT int
+	StatName    string // for stat_buff / stat_debuff: "attack", "defense", "speed", etc.
+	StatDelta   int    // amount to change the stat (negative = debuff)
 }
 
 // ─── Skill tree ───────────────────────────────────────────────────────────────

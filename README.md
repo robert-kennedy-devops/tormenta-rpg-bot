@@ -4,7 +4,7 @@ Bot MMORPG multiplayer para Telegram, inspirado no sistema Tormenta 20. Combate 
 
 Arquitetura modular escrita em Go, projetada para escalar de centenas a **1 milhão de jogadores**.
 
-> **Conteúdo gerado:** 120 habilidades · 750+ itens · 59+ monstros · 10 classes · 7 raças — do nível 1 ao 100.
+> **Conteúdo gerado:** 210 habilidades · 750+ itens · 59+ monstros · 8 classes · 7 raças — do nível 1 ao 100 · 20 combos · maestria em 6 níveis.
 
 ---
 
@@ -128,14 +128,22 @@ tormenta-bot/
 │   │   ├── status_engine.go       # StatusSet, 12 efeitos (veneno, burn, stun…)
 │   │   ├── effect_processor.go    # Combatant interface, ProcessEffect/Effects
 │   │   ├── skill_engine.go        # Resolução de habilidades, PassiveRegistry
-│   │   └── ai_engine.go           # AITier, MonsterAdaptation, SelectAction
+│   │   ├── ai_engine.go           # AITier, MonsterAdaptation, SelectAction
+│   │   ├── combo_engine.go        # GlobalCombos: 20 combos de 3 passos com janela temporal
+│   │   └── mastery_engine.go      # GlobalMasteryStore: maestria em 6 níveis (0–300 usos)
 │   ├── rpg/                       # Sistema RPG completo (extensão sem quebrar game/)
 │   │   ├── race.go                # 7 raças: Humano, Elfo, Anão, Goblin, Qareen, Minotauro, Meio-Orc
 │   │   ├── class.go               # 8 classes: Guerreiro, Arcanista, Ladino, Caçador,
 │   │   │                          #            Paladino, Clérigo, Bárbaro, Bardo
 │   │   ├── attributes.go          # Atributos, modificadores D&D, stats derivados
 │   │   ├── xp.go                  # Curva XP nível 1–100, milestones, recompensas
-│   │   ├── skill_tree.go          # Árvores de habilidades por classe e ramo
+│   │   ├── skill_tree.go          # SkillNode, Branch, SkillTree, Trees map
+│   │   ├── skill_trees_warrior.go # 27 skills: Espada & Escudo · Maestria · Determinação
+│   │   ├── skill_trees_mage.go    # 27 skills: Arcanismo · Elementalismo · Transmutação
+│   │   ├── skill_trees_rogue.go   # 25 skills: Sombras · Venenos · Esperteza
+│   │   ├── skill_trees_archer.go  # 27 skills: Precisão · Natureza · Sobrevivência
+│   │   ├── skill_trees_extended.go# Extensão barb/pal/cler/bard + 30+ passivas novas
+│   │   ├── skill_trees_extra.go   # Skills finais de completamento
 │   │   ├── talents.go             # Talentos (desbloqueados nos níveis 10/25/50/75/100)
 │   │   └── passives.go            # Registro de passivas de raça/classe no engine
 │   ├── economy/                   # Economia controlada anti-inflação
@@ -262,18 +270,57 @@ A cada **4 níveis** os dois atributos primários da classe sobem +1. A cada **1
 
 ### Árvore de habilidades
 
-Cada classe possui ramos de especialização com nós de Tier 1 a 4. Habilidades têm pré-requisitos, custo em pontos de habilidade e pré-requisito de nível. Capstones de Tier 4 são habilidades "ultimate".
+Cada classe possui **3 ramos** com **5 tiers** de habilidades (T1 Lv1 → T5 Ultimate Lv75-80). Total: **210 habilidades** balanceadas do nível 1 ao 100, com pré-requisitos, custo em pontos de habilidade e efeitos de engine.
 
-Cada classe possui **3 ramos** com **4 tiers** de habilidades (T1 lv1, T2 lv21, T3 lv41, T4 lv71). As habilidades dentro de um ramo exigem a anterior como pré-requisito. Total: **120 habilidades** geradas automaticamente.
+| Classe | Ramos | Skills | Ultimas |
+|---|---|---|---|
+| ⚔️ Guerreiro | Espada & Escudo · Maestria de Armas · Determinação | 27 | Avatar da Guerra |
+| 🧙 Arcanista | Arcanismo · Elementalismo · Transmutação | 27 | Aniquilação Arcana · Raio Prismático · Ruptura da Realidade |
+| 🗡️ Ladino | Sombras · Venenos · Esperteza | 25 | Assassinar · Toxina Viral · Golpe de Misericórdia |
+| 🏹 Caçador | Precisão · Natureza · Sobrevivência | 27 | Flecha Divina · Avatar da Natureza · Tiro Fatal |
+| ⚜️ Paladino | Sagrado · Proteção · Julgamento | 27 | Ressurreição Divina · Escudo Divino · Armagedom |
+| ✝️ Clérigo | Cura · Luz Divina · Proteção Divina | 26 | Milagre · Avatar da Luz · Escudo dos Deuses |
+| 🪓 Bárbaro | Fúria · Resistência · Guerreiro Tribal | 25 | Senhor da Guerra · Postura da Montanha · Impacto do Titã |
+| 🎵 Bardo | Música · Conhecimento Bárdico · Ilusionismo | 26 | Canção das Lendas · Final da Ópera · Grande Ilusão |
 
-Exemplos de ramos por classe:
+**Tiers de progressão:**
 
-- **Guerreiro:** Protetor / Berserker / Duelista
-- **Bárbaro:** Fúria / Selvagem / Resistência
-- **Paladino:** Sagrado / Proteção / Redenção
-- **Clérigo:** Curandeiro / Sagrado / Protetor
-- **Druida:** Natureza / Metamorfose / Cura Natural
-- **Necromante:** Morte / Dreno / Sombra
+| Tier | Nível | Custo de pontos | Custo MP |
+|---|---|---|---|
+| T1 | 1–8 | 1 pt | 5–15 MP |
+| T2 | 10–22 | 1–2 pts | 15–35 MP |
+| T3 | 25–40 | 2 pts | 30–60 MP |
+| T4 | 40–60 | 3 pts | 50–90 MP |
+| T5 Ultimate | 75–80 | 5 pts | 90–130 MP |
+
+### Sistema de Combos
+
+Sequências específicas de habilidades na ordem correta ativam combos que causam bônus de dano e efeitos extras.
+
+| Combo | Classe | Sequência | Bônus |
+|---|---|---|---|
+| Trindade de Ferro | Guerreiro | Golpe Firme → Corte Poderoso → Executar | +50% dano + 80 físico |
+| Tri-Elemental | Arcanista | Bola de Fogo → Raio → Lança de Gelo | +60% dano + AoE mágica |
+| Arte do Assassino | Ladino | Ataque Pelas Costas → Marca da Morte → Assassinar | ×2 dano + 100 físico |
+| Abate Perfeito | Caçador | Marca do Caçador → Tiro na Cabeça → Tiro Fatal | ×2 dano + 95 físico |
+| Retribuição Divina | Paladino | Marca da Justiça → Ira Sagrada → Julgamento Divino | +80% dano + 100 sagrado |
+| Frenesi de Sangue | Bárbaro | Fúria → Sede de Sangue → Devastação | Berserk 5 turnos |
+| Sinfonia da Destruição | Bardo | Hino de Batalha → Discordância → Final da Ópera | AoE sombra + 80 |
+
+20 combos no total — 3 por classe principal, 2 por suporte.
+
+### Sistema de Maestria
+
+Usar uma habilidade repetidamente desenvolve maestria, desbloqueando bônus progressivos:
+
+| Nível | Usos | Bônus de dano | Redução de MP | Crítico extra |
+|---|---|---|---|---|
+| ⚪ Novato | 0 | — | — | — |
+| 🟢 Aprendiz | 10 | +8% | -3% | +1% |
+| 🔵 Adepto | 30 | +18% | -8% | +3% |
+| 🟣 Especialista | 75 | +32% | -15% | +6% |
+| 🟡 Mestre | 150 | +50% | -25% | +10% |
+| 🔴 Grão-Mestre | 300 | +75% | -40% | +15% |
 
 ### Talentos
 
@@ -447,11 +494,13 @@ O pacote `internal/rpgdata` é uma biblioteca de dados pura (sem I/O, sem BD) qu
 
 | Categoria | Quantidade | Método |
 |---|---|---|
-| Habilidades | **120** | 10 classes × 3 ramos × 4 tiers |
-| Itens | **750+** | 25 templates × 5 tiers × 6 raridades |
-| Monstros | **59+** | 13 arquétipos × bandas de nível |
+| Habilidades | **210** | 8 classes × 3 ramos × T1–T5 (engine/rpg) |
+| Combos | **20** | 3 por classe principal, 2 por suporte |
+| Níveis de Maestria | **6** | Novato → Grão-Mestre (engine/mastery) |
+| Itens | **750+** | 25 templates × 5 tiers × 6 raridades (rpgdata) |
+| Monstros | **59+** | 13 arquétipos × bandas de nível (rpgdata) |
 | Raças | 7 | Definidas manualmente |
-| Classes | 10 | Definidas manualmente |
+| Classes | 8 | Definidas manualmente |
 
 ### Raridades de itens
 
