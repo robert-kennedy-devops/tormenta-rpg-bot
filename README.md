@@ -4,7 +4,7 @@ Bot MMORPG multiplayer para Telegram, inspirado no sistema Tormenta 20. Combate 
 
 Arquitetura modular escrita em Go, projetada para escalar de centenas a **1 milhão de jogadores**.
 
-> **Conteúdo gerado:** 210 habilidades · 750+ itens · 59+ monstros · 8 classes · 7 raças — do nível 1 ao 100 · 20 combos · maestria em 6 níveis.
+> **Conteúdo gerado:** 150+ habilidades ativas no bot (48 legadas + 102 novas) · 210 na engine/rpg · 750+ itens · 59+ monstros · 8 classes · 7 raças — do nível 1 ao 100 · 20 combos · maestria em 6 níveis.
 
 ---
 
@@ -221,9 +221,19 @@ tormenta-bot/
 │   │   ├── extended_items.go      # Itens estendidos (materiais/crafting)
 │   │   └── safe_lookup.go         # GetMonster/Race/Class/Skill/Item — nil-safe com erro
 │   │
-│   ├── game/skills/               # Auditoria e validação do sistema de habilidades
+│   ├── game/skills/               # 102 novas habilidades ativas (game.Skills) + validação
+│   │   ├── registry.go            # AllSkills() — agrega as 8 classes; constantes de Role
+│   │   ├── warrior.go             # 11 skills T3–T5 (protetor/berserker/campiao)
+│   │   ├── mage.go                # 11 skills T3–T5 (piromante/crionita/arcanista) + sinergias
+│   │   ├── rogue.go               # 10 skills T3–T5 (assassino/envenenador/sombra) + sinergias
+│   │   ├── archer.go              # 10 skills T3–T5 (atirador/cacador/arcano) + sinergias
+│   │   ├── barbarian.go           # 15 skills T1–T5 (frenesi/resistencia/tribal)
+│   │   ├── paladin.go             # 15 skills T1–T5 (sagrado/protecao/julgamento) + sinergias
+│   │   ├── cleric.go              # 15 skills T1–T5 (cura/luz/protecao_divina)
+│   │   ├── bard.go                # 15 skills T1–T5 (musica/conhecimento/ilusao) + sinergias
 │   │   └── validator.go           # ValidateSkillTrees(): IDs duplicados, mecânicas iguais,
 │   │                              #   requisitos órfãos, anomalias de balanceamento (mean+2σ)
+│   ├── game/skill_register.go     # init(): mescla AllSkills() em game.Skills (não-destrutivo)
 │   │
 │   ├── ui/                        # Motor de menus Telegram profissional
 │   │   └── menu_engine.go         # MenuState, Engine global, debounce 500ms, cache TTL 5s,
@@ -522,7 +532,8 @@ O pacote `internal/rpgdata` é uma biblioteca de dados pura (sem I/O, sem BD) qu
 
 | Categoria | Quantidade | Método |
 |---|---|---|
-| Habilidades | **210** | 8 classes × 3 ramos × T1–T5 (engine/rpg) |
+| Habilidades (rpg/engine) | **210** | 8 classes × 3 ramos × T1–T5 (engine/rpg — dormentes) |
+| Habilidades (game.Skills) | **150+** | 48 legadas + 102 novas (game/skills/) — ativas no bot |
 | Combos | **20** | 3 por classe principal, 2 por suporte |
 | Níveis de Maestria | **6** | Novato → Grão-Mestre (engine/mastery) |
 | Itens | **750+** | 25 templates × 5 tiers × 6 raridades (rpgdata) |
@@ -602,9 +613,11 @@ Todas as ações são auditadas em `gm_action_logs`.
 - **Event-driven** — sistemas comunicam via `eventbus.Global` (pub/sub assíncrono)
 - **Constantes centralizadas** — `internal/config/game_config.go` elimina valores hardcoded espalhados pelo código
 - **Skill roles obrigatórios** — todo `SkillNode` declara um `SkillRole` (10 valores: `DIRECT_DAMAGE`, `AOE`, `DOT`, `BUFF`, `DEBUFF`, `CONTROL`, `HEAL`, `UTILITY`, `SUMMON`, `PASSIVE`)
+- **Sistema de sinergias** — `AppliesStatus` aplica estado no alvo (burn/freeze/stun/blind/bleed/curse/silence); `RequiresStatus + SynergyMult` aplica bônus de dano quando o alvo já tem o estado (ex: Frost Nova→freeze→Ice Lance +50%, Holy Flame→burn→Holy Sword +60%)
 - **Fórmula anti-inflação** — `engine.CalculateDamageLog()` usa `log(lv+1)` limitando dano máx. a ×2.3 no lv 100 (vs ×10 linear)
 - **Validação de skills ao startup** — `game/skills.ValidateSkillTrees()` detecta IDs duplicados, mecânicas idênticas, requisitos órfãos e outliers de balanceamento
 - **Safe lookups** — `game.GetMonster/Race/Class/Skill/Item` retornam `(T, error)` eliminando nil-pointer panics em produção
+- **Cobertura total de classes** — barbarian/paladin/cleric/bard agora têm 15 skills ativas cada (T1–T5, 3 ramos), menus de ramo e combate totalmente funcionais
 
 ### Motor de menus (`internal/ui/`)
 
