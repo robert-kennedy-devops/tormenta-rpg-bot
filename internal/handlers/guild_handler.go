@@ -145,8 +145,7 @@ func showGuildSearch(chatID int64, msgID int, _ int64) {
 // Returns true if the input was consumed.
 func handleGuildNameInput(msg *tgbotapi.Message) bool {
 	userID := msg.From.ID
-	state := creationState[userID]
-	if state == nil || state["awaiting_guild_name"] != "true" {
+	if csField(userID, "awaiting_guild_name") != "true" {
 		return false
 	}
 	name := strings.TrimSpace(msg.Text)
@@ -161,18 +160,18 @@ func handleGuildNameInput(msg *tgbotapi.Message) bool {
 	const createCost = 1000
 	if char.Gold < createCost {
 		sendText(msg.Chat.ID, fmt.Sprintf("❌ Você precisa de *%d* ouro para criar uma guilda.\n\nSeu ouro: *%d*", createCost, char.Gold))
-		delete(creationState[userID], "awaiting_guild_name")
+		csDelete(userID, "awaiting_guild_name")
 		return true
 	}
 	g, err := guild.GlobalService.CreateGuild(userID, char.Name, name, "", "")
 	if err != nil {
 		sendText(msg.Chat.ID, "❌ Erro ao criar guilda: "+err.Error())
-		delete(creationState[userID], "awaiting_guild_name")
+		csDelete(userID, "awaiting_guild_name")
 		return true
 	}
 	char.Gold -= createCost
 	database.SaveCharacter(char)
-	delete(creationState[userID], "awaiting_guild_name")
+	csDelete(userID, "awaiting_guild_name")
 	kb := menukit.MenuOnly()
 	sendMsg(msg.Chat.ID, fmt.Sprintf("⚔️ *Guilda %s criada com sucesso!*\n\nVocê é agora o líder!\n🪙 Ouro restante: *%d*", g.Name, char.Gold), &kb)
 	return true
@@ -261,10 +260,7 @@ func handleGuildCreate(chatID int64, msgID int, userID int64) {
 			"✏️ Envie o nome da sua guilda (3-20 caracteres):",
 		createCost, char.Gold,
 	)
-	if creationState[userID] == nil {
-		creationState[userID] = map[string]string{}
-	}
-	creationState[userID]["awaiting_guild_name"] = "true"
+	csSet(userID, "awaiting_guild_name", "true")
 	kb := menukit.MenuOnly()
 	editMsg(chatID, msgID, caption, &kb)
 }

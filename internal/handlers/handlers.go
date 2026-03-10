@@ -1,4 +1,4 @@
-package handlers
+﻿package handlers
 
 import (
 	"fmt"
@@ -33,12 +33,13 @@ var Bot *tgbotapi.BotAPI
 // =============================================
 
 var (
-	creationState  = map[int64]map[string]string{}    // char creation flow
-	shopQtyState   = map[int64]*models.ShopQtyState{} // pending buy qty selection (legado)
-	shopCart       = map[int64]*models.ShopCart{}     // carrinho multi-item
-	sellCart       = map[int64]*models.SellCart{}     // seleção multi-venda
-	navCurrent     = map[int64]string{}               // tela atual por usuário (navegação)
-	navBack        = map[int64]map[string]string{}    // destino de voltar por menu dinâmico
+	// NOTE: session-state maps moved to safe_state.go with mutex protection.
+	// Accessors: csGet/csSet/csInit/csClear (creationState)
+	//            scGet/scSet/scClear (shopCart)
+	//            sellGet/sellSet/sellClear (sellCart)
+	//            sqGet/sqSet/sqClear (shopQtyState)
+	//            navGet/navSet (navCurrent)
+	//            nbGet/nbSet/nbGetAll (navBack)
 	callbackGuard  = anti_cheat.NewCallbackGuard()
 	stateGuard     = anti_cheat.NewTransitionGuard()
 	securitySvc    = coresvc.NewSecurityService(repository.NewSQLRepository())
@@ -71,21 +72,18 @@ func rememberMenuBack(userID int64, dest string) {
 	if !isDynamicBackMenu(dest) {
 		return
 	}
-	from := navCurrent[userID]
+	from := navGet(userID)
 	if from == "" {
 		from = "menu_main"
 	}
 	if from == dest {
 		return
 	}
-	if _, ok := navBack[userID]; !ok {
-		navBack[userID] = map[string]string{}
-	}
-	navBack[userID][dest] = from
+	nbSet(userID, dest, from)
 }
 
 func menuBackDest(userID int64, menuDest, fallback string) string {
-	if byMenu, ok := navBack[userID]; ok {
+	if byMenu := nbGetAll(userID); byMenu != nil {
 		if dest, ok2 := byMenu[menuDest]; ok2 && dest != "" {
 			return dest
 		}
@@ -473,7 +471,7 @@ func HandleCallback(cb *tgbotapi.CallbackQuery) {
 	case data == "sell_confirm_all":
 		handleSellConfirmAll(chatID, msgID, userID)
 	case data == "sell_cancel":
-		delete(sellCart, userID)
+		sellClear(userID)
 		showSellMenu(chatID, msgID, userID)
 
 	// ── TRAVEL ──────────────────────────────────────────
@@ -733,7 +731,7 @@ func HandleCallback(cb *tgbotapi.CallbackQuery) {
 	}
 
 	if screen := screenFromCallback(data); screen != "" {
-		navCurrent[userID] = screen
+		navSet(userID, screen)
 	}
 }
 
@@ -760,7 +758,7 @@ func handleCombatResume(chatID int64, msgID int, userID int64) {
 // =============================================
 
 func startCharacterCreation(chatID int64, msgID int, userID int64) {
-	creationState[userID] = map[string]string{}
+	csInit(userID)
 
 	human := game.Races["human"]
 	elf := game.Races["elf"]
@@ -785,10 +783,7 @@ func startCharacterCreation(chatID int64, msgID int, userID int64) {
 }
 
 func handleRaceSelect(chatID int64, msgID int, userID int64, race string) {
-	if creationState[userID] == nil {
-		creationState[userID] = map[string]string{}
-	}
-	creationState[userID]["race"] = race
+	csSet(userID, "race", race)
 	r := game.Races[race]
 	warrior := game.Classes["warrior"]
 	mage := game.Classes["mage"]
@@ -828,13 +823,12 @@ func handleRaceSelect(chatID int64, msgID int, userID int64, race string) {
 }
 
 func handleClassSelect(chatID int64, msgID int, userID int64, class string) {
-	state := creationState[userID]
-	if state == nil || state["race"] == "" {
+	if csField(userID, "race") == "" {
 		editMsg(chatID, msgID, "❌ Selecione uma raça primeiro.", nil)
 		return
 	}
-	state["class"] = class
-	state["awaiting_name"] = "true"
+	csSet(userID, "class", class)
+	csSet(userID, "awaiting_name", "true")
 	c := game.Classes[class]
 	caption := fmt.Sprintf(
 		"%s *%s*\n\n📖 _%s_\n🎯 Papel: *%s* | ❤️ %d HP (+%d/nível) | 💙 %d MP (+%d/nível)\n\n✏️ *Escreva o nome do seu personagem* (3-20 caracteres):",
@@ -859,8 +853,7 @@ func handleTextInput(msg *tgbotapi.Message) {
 		return
 	}
 
-	state := creationState[userID]
-	if state == nil || state["awaiting_name"] != "true" {
+	if csField(userID, "awaiting_name") != "true" {
 		return
 	}
 	name := strings.TrimSpace(msg.Text)
@@ -868,7 +861,7 @@ func handleTextInput(msg *tgbotapi.Message) {
 		sendText(msg.Chat.ID, "❌ Nome deve ter entre 3 e 20 caracteres. Tente novamente:")
 		return
 	}
-	race, class := state["race"], state["class"]
+	race, class := csField(userID, "race"), csField(userID, "class")
 	hp, mp, atk, def, matk, mdef, spd := game.CalculateBaseStats(race, class)
 	energyMax := game.MaxEnergy(1)
 
@@ -899,7 +892,7 @@ func handleTextInput(msg *tgbotapi.Message) {
 	database.AddItem(char.ID, "energy_drink", "consumable", 2)
 	database.EquipItem(char.ID, starterWeapon, "weapon")
 	database.EquipItem(char.ID, "leather_armor", "armor")
-	delete(creationState, userID)
+	csClear(userID)
 
 	r, c := game.Races[race], game.Classes[class]
 	sw := game.Items[starterWeapon]
@@ -1312,10 +1305,10 @@ func showShopHome(chatID int64, msgID int, userID int64) {
 	if char == nil {
 		return
 	}
-	cart := shopCart[userID]
+	cart := scGet(userID)
 	if cart == nil {
 		cart = &models.ShopCart{TabType: "consumable"}
-		shopCart[userID] = cart
+		scSet(userID, cart)
 	}
 
 	caption := fmt.Sprintf("🏪 *Loja*\n🪙 *%d* ouro | 💎 *%d* diamantes\n\nSelecione uma categoria:", char.Gold, char.Diamonds)
@@ -1344,10 +1337,10 @@ func showShopPage(chatID int64, msgID int, userID int64, pageType string) {
 		return
 	}
 
-	cart := shopCart[userID]
+	cart := scGet(userID)
 	if cart == nil {
 		cart = &models.ShopCart{TabType: pageType}
-		shopCart[userID] = cart
+		scSet(userID, cart)
 	}
 	cart.TabType = pageType
 
@@ -1450,7 +1443,7 @@ func showShopItem(chatID int64, msgID int, userID int64, tab string, itemID stri
 	}
 
 	inCart := 0
-	cart := shopCart[userID]
+	cart := scGet(userID)
 	if cart != nil {
 		for _, ci := range cart.Items {
 			if ci.ItemID == itemID {
@@ -1498,10 +1491,10 @@ func addShopItemToCart(userID int64, itemID string) (string, bool) {
 	if item.MinLevel > char.Level {
 		return item.Type, false
 	}
-	cart := shopCart[userID]
+	cart := scGet(userID)
 	if cart == nil {
 		cart = &models.ShopCart{TabType: "consumable"}
-		shopCart[userID] = cart
+		scSet(userID, cart)
 	}
 	// Adiciona ou incrementa
 	found := false
@@ -1525,7 +1518,7 @@ func handleShopAddItem(chatID int64, msgID int, userID int64, itemID string) {
 		showShopHome(chatID, msgID, userID)
 		return
 	}
-	cart := shopCart[userID]
+	cart := scGet(userID)
 	tab := itemType
 	if cart != nil && cart.TabType != "" {
 		tab = cart.TabType
@@ -1535,7 +1528,7 @@ func handleShopAddItem(chatID int64, msgID int, userID int64, itemID string) {
 
 // handleShopChangeQty incrementa ou decrementa qty de item no carrinho.
 func handleShopChangeQty(chatID int64, msgID int, userID int64, itemID string, delta int) {
-	cart := shopCart[userID]
+	cart := scGet(userID)
 	if cart == nil {
 		showShopMenu(chatID, msgID, userID)
 		return
@@ -1554,7 +1547,7 @@ func handleShopChangeQty(chatID int64, msgID int, userID int64, itemID string, d
 
 // handleShopRemoveItem remove um item do carrinho.
 func handleShopRemoveItem(chatID int64, msgID int, userID int64, itemID string) {
-	cart := shopCart[userID]
+	cart := scGet(userID)
 	if cart == nil {
 		showShopMenu(chatID, msgID, userID)
 		return
@@ -1578,7 +1571,7 @@ func handleShopCheckout(chatID int64, msgID int, userID int64) {
 	if char == nil {
 		return
 	}
-	cart := shopCart[userID]
+	cart := scGet(userID)
 	if cart == nil || len(cart.Items) == 0 {
 		showShopMenu(chatID, msgID, userID)
 		return
@@ -1630,7 +1623,7 @@ func handleShopQty(chatID int64, msgID int, userID int64, qtyStr string) {
 	if char == nil {
 		return
 	}
-	state := shopQtyState[userID]
+	state := sqGet(userID)
 	if state == nil {
 		showShopMenu(chatID, msgID, userID)
 		return
@@ -1708,7 +1701,7 @@ func handleShopConfirmBuy(chatID int64, msgID int, userID int64) {
 	if char == nil {
 		return
 	}
-	cart := shopCart[userID]
+	cart := scGet(userID)
 	if cart == nil || len(cart.Items) == 0 {
 		showShopMenu(chatID, msgID, userID)
 		return
@@ -1735,7 +1728,7 @@ func handleShopConfirmBuy(chatID int64, msgID int, userID int64) {
 	}
 
 	database.SaveCharacter(char)
-	delete(shopCart, userID)
+	scClear(userID)
 
 	caption := fmt.Sprintf(
 		"✅ *Compra realizada!*\n\n%s\n💰 Pago: *%d* 🪙\n🪙 Ouro restante: *%d*",
@@ -1759,10 +1752,10 @@ func showSellHome(chatID int64, msgID int, userID int64) {
 		return
 	}
 
-	cart := sellCart[userID]
+	cart := sellGet(userID)
 	if cart == nil {
 		cart = &models.SellCart{}
-		sellCart[userID] = cart
+		sellSet(userID, cart)
 	}
 
 	caption := fmt.Sprintf("💰 *Vender Itens*\n🪙 Ouro atual: *%d*\n\nSelecione uma categoria:", char.Gold)
@@ -1870,7 +1863,7 @@ func showSellPage(chatID int64, msgID int, userID int64, filterType string) {
 		tgbotapi.NewInlineKeyboardButtonData("⬅️ Voltar", "menu_sell"),
 	})
 
-	cart := sellCart[userID]
+	cart := sellGet(userID)
 	if cart != nil && len(cart.Items) > 0 {
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(
@@ -1900,7 +1893,7 @@ func showSellItem(chatID int64, msgID int, userID int64, tab string, itemID stri
 		return
 	}
 
-	cart := sellCart[userID]
+	cart := sellGet(userID)
 	inCart := 0
 	if cart != nil {
 		for _, sc := range cart.Items {
@@ -1953,10 +1946,10 @@ func addSellItemToCart(userID int64, charID int, itemID string) bool {
 	if maxQty <= 0 {
 		return false
 	}
-	cart := sellCart[userID]
+	cart := sellGet(userID)
 	if cart == nil {
 		cart = &models.SellCart{}
-		sellCart[userID] = cart
+		sellSet(userID, cart)
 	}
 	for i, sc := range cart.Items {
 		if sc.ItemID == itemID {
@@ -1984,7 +1977,7 @@ func handleSellAddItem(chatID int64, msgID int, userID int64, itemID string) {
 
 // handleSellChangeQty incrementa ou decrementa a qty de um item no carrinho de venda.
 func handleSellChangeQty(chatID int64, msgID int, userID int64, itemID string, delta int) {
-	cart := sellCart[userID]
+	cart := sellGet(userID)
 	if cart == nil {
 		showSellMenu(chatID, msgID, userID)
 		return
@@ -2003,7 +1996,7 @@ func handleSellChangeQty(chatID int64, msgID int, userID int64, itemID string, d
 
 // handleSellRemoveItem remove um item do carrinho de venda.
 func handleSellRemoveItem(chatID int64, msgID int, userID int64, itemID string) {
-	cart := sellCart[userID]
+	cart := sellGet(userID)
 	if cart == nil {
 		showSellMenu(chatID, msgID, userID)
 		return
@@ -2027,7 +2020,7 @@ func handleSellCheckout(chatID int64, msgID int, userID int64) {
 	if char == nil {
 		return
 	}
-	cart := sellCart[userID]
+	cart := sellGet(userID)
 	if cart == nil || len(cart.Items) == 0 {
 		showSellMenu(chatID, msgID, userID)
 		return
@@ -2075,7 +2068,7 @@ func handleSellConfirmAll(chatID int64, msgID int, userID int64) {
 	if char == nil {
 		return
 	}
-	cart := sellCart[userID]
+	cart := sellGet(userID)
 	if cart == nil || len(cart.Items) == 0 {
 		showSellMenu(chatID, msgID, userID)
 		return
@@ -2107,7 +2100,7 @@ func handleSellConfirmAll(chatID int64, msgID int, userID int64) {
 	database.SaveCharacter(char)
 	recalculateStats(char)
 	database.SaveCharacter(char)
-	delete(sellCart, userID)
+	sellClear(userID)
 
 	caption := fmt.Sprintf(
 		"✅ *Venda realizada!*\n\n%s\n💰 Total recebido: *+%d* 🪙\n🪙 Ouro total: *%d*",

@@ -1,10 +1,22 @@
 package market
 
-import "github.com/tormenta-bot/internal/economy"
+import (
+	"database/sql"
 
-// Global singletons — backed by in-memory stores for now.
-var (
-	GlobalStore        ListingStore  = NewMemListingStore()
-	GlobalAuctionStore AuctionStore  = NewMemAuctionStore()
-	GlobalService                    = NewMarketService(GlobalStore, GlobalAuctionStore, economy.Global)
+	"github.com/tormenta-bot/internal/economy"
 )
+
+// Global singletons — start with in-memory fallback, switched to DB by InitDB.
+var (
+	GlobalStore        ListingStore = NewMemListingStore()
+	GlobalAuctionStore AuctionStore = NewMemAuctionStore()
+	GlobalService                   = NewMarketService(GlobalStore, GlobalAuctionStore, economy.Global)
+)
+
+// InitDB replaces the in-memory stores with DB-backed implementations.
+// Must be called once after database.Connect().
+func InitDB(db *sql.DB) {
+	GlobalStore = NewDBListingStore(db)
+	GlobalAuctionStore = NewDBAuctionStore(db)
+	GlobalService = NewMarketService(GlobalStore, GlobalAuctionStore, economy.Global)
+}

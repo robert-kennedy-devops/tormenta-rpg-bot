@@ -15,7 +15,9 @@ import (
 	"github.com/tormenta-bot/internal/assets"
 	botruntime "github.com/tormenta-bot/internal/bot"
 	"github.com/tormenta-bot/internal/database"
+	"github.com/tormenta-bot/internal/guild"
 	"github.com/tormenta-bot/internal/handlers"
+	"github.com/tormenta-bot/internal/market"
 	"github.com/tormenta-bot/internal/worker"
 )
 
@@ -48,6 +50,9 @@ func main() {
 		log.Fatalf("❌ Database connection failed: %v", err)
 	}
 	database.Migrate()
+	guild.InitDB(database.DB)
+	market.InitDB(database.DB)
+	log.Println("🗄️  DB-backed guild & market stores initialized")
 
 	// Initialize image asset manager
 	assetsDir := os.Getenv("ASSETS_DIR")

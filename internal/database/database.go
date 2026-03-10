@@ -146,6 +146,119 @@ func Migrate() {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_gm_action_logs_gm_created ON gm_action_logs(gm_player_id, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_gm_action_logs_target_created ON gm_action_logs(target_character_id, created_at DESC)`,
+
+		// ── Guild persistence ─────────────────────────────────────────────────
+		`CREATE TABLE IF NOT EXISTS guilds (
+			id BIGSERIAL PRIMARY KEY,
+			name VARCHAR(64) NOT NULL UNIQUE,
+			tag VARCHAR(8) NOT NULL DEFAULT '',
+			description TEXT NOT NULL DEFAULT '',
+			emoji VARCHAR(8) NOT NULL DEFAULT '⚔️',
+			leader_id BIGINT NOT NULL,
+			level INT NOT NULL DEFAULT 1,
+			xp INT NOT NULL DEFAULT 0,
+			xp_next INT NOT NULL DEFAULT 1000,
+			max_members INT NOT NULL DEFAULT 10,
+			bank_gold INT NOT NULL DEFAULT 0,
+			territory_id VARCHAR(64) NOT NULL DEFAULT '',
+			active_buff VARCHAR(64) NOT NULL DEFAULT '',
+			buff_expiry TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_guilds_leader ON guilds(leader_id)`,
+		`CREATE TABLE IF NOT EXISTS guild_members (
+			guild_id BIGINT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
+			player_id BIGINT NOT NULL,
+			player_name VARCHAR(64) NOT NULL DEFAULT '',
+			rank VARCHAR(16) NOT NULL DEFAULT 'recruit',
+			contribution INT NOT NULL DEFAULT 0,
+			joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			last_online TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (guild_id, player_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_guild_members_player ON guild_members(player_id)`,
+
+		// ── Market persistence ────────────────────────────────────────────────
+		`CREATE TABLE IF NOT EXISTS market_listings (
+			id BIGSERIAL PRIMARY KEY,
+			seller_id BIGINT NOT NULL,
+			seller_name VARCHAR(64) NOT NULL DEFAULT '',
+			item_id VARCHAR(64) NOT NULL,
+			item_type VARCHAR(32) NOT NULL DEFAULT '',
+			quantity INT NOT NULL DEFAULT 1,
+			unit_price INT NOT NULL,
+			expires_at TIMESTAMPTZ NOT NULL,
+			sold BOOLEAN NOT NULL DEFAULT FALSE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_market_listings_item ON market_listings(item_id, sold)`,
+		`CREATE INDEX IF NOT EXISTS idx_market_listings_seller ON market_listings(seller_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_market_listings_expires ON market_listings(expires_at) WHERE NOT sold`,
+		`CREATE TABLE IF NOT EXISTS market_auctions (
+			id BIGSERIAL PRIMARY KEY,
+			seller_id BIGINT NOT NULL,
+			seller_name VARCHAR(64) NOT NULL DEFAULT '',
+			item_id VARCHAR(64) NOT NULL,
+			item_type VARCHAR(32) NOT NULL DEFAULT '',
+			quantity INT NOT NULL DEFAULT 1,
+			start_price INT NOT NULL,
+			current_bid INT NOT NULL DEFAULT 0,
+			bidder_id BIGINT NOT NULL DEFAULT 0,
+			bidder_name VARCHAR(64) NOT NULL DEFAULT '',
+			expires_at TIMESTAMPTZ NOT NULL,
+			settled BOOLEAN NOT NULL DEFAULT FALSE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_market_auctions_item ON market_auctions(item_id, settled)`,
+		`CREATE INDEX IF NOT EXISTS idx_market_auctions_expires ON market_auctions(expires_at) WHERE NOT settled`,
+
+		// ── PvP ranking persistence ───────────────────────────────────────────
+		`CREATE TABLE IF NOT EXISTS pvp_ratings (
+			player_id BIGINT PRIMARY KEY,
+			player_name VARCHAR(64) NOT NULL DEFAULT '',
+			rating INT NOT NULL DEFAULT 1000,
+			wins INT NOT NULL DEFAULT 0,
+			losses INT NOT NULL DEFAULT 0,
+			season_id INT NOT NULL DEFAULT 1,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_pvp_ratings_season_rating ON pvp_ratings(season_id, rating DESC)`,
+
+		// ── World boss / raid persistence ─────────────────────────────────────
+		`CREATE TABLE IF NOT EXISTS world_boss_log (
+			id BIGSERIAL PRIMARY KEY,
+			boss_id VARCHAR(64) NOT NULL,
+			player_id BIGINT NOT NULL,
+			player_name VARCHAR(64) NOT NULL DEFAULT '',
+			damage INT NOT NULL DEFAULT 0,
+			killed BOOLEAN NOT NULL DEFAULT FALSE,
+			gold_reward INT NOT NULL DEFAULT 0,
+			xp_reward INT NOT NULL DEFAULT 0,
+			logged_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_wblog_boss_player ON world_boss_log(boss_id, player_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_wblog_logged ON world_boss_log(logged_at DESC)`,
+
+		// ── Seasons ───────────────────────────────────────────────────────────
+		`CREATE TABLE IF NOT EXISTS seasons (
+			id SERIAL PRIMARY KEY,
+			started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			ended_at TIMESTAMPTZ,
+			active BOOLEAN NOT NULL DEFAULT TRUE
+		)`,
+		`CREATE TABLE IF NOT EXISTS season_rewards (
+			id BIGSERIAL PRIMARY KEY,
+			season_id INT NOT NULL,
+			player_id BIGINT NOT NULL,
+			rank INT NOT NULL,
+			gold_reward INT NOT NULL DEFAULT 0,
+			diamond_reward INT NOT NULL DEFAULT 0,
+			title VARCHAR(64) NOT NULL DEFAULT '',
+			granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE(season_id, player_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_season_rewards_season ON season_rewards(season_id, rank)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := DB.Exec(stmt); err != nil {
