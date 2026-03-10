@@ -127,24 +127,36 @@ var skillClassDefs = []skillClassDef{
 		{id: "ro_death_mark", name: "Marca da Morte", emoji: "☠️", branch: "assassino", tier: 4, mpCost: 45, damage: 110, damageType: "physical", description: "Marca o inimigo: por 3 rodadas recebe +30% dano de todas as fontes."},
 		// Branch: Esquiva
 		{id: "ro_dodge", name: "Esquivar", emoji: "💨", branch: "esquiva", tier: 1, mpCost: 5, damage: 0, damageType: "buff", description: "+30% chance de esquivar por 2 rodadas."},
-		{id: "ro_smoke_bomb", name: "Bomba de Fumaça", emoji: "💣", branch: "esquiva", tier: 2, mpCost: 15, damage: 0, damageType: "utility", description: "Reduz acerto do inimigo em 50% por 2 rodadas."},
+		// ro_smoke_bomb: renomeado de "Bomba de Fumaça" para "Cortina de Fumaça" — r_smoke_bomb
+		// (legado sombra T2) e rg_smoke_bomb (renomeado "Névoa da Morte") já usam esse nome.
+		{id: "ro_smoke_bomb", name: "Cortina de Fumaça", emoji: "💣", branch: "esquiva", tier: 2, mpCost: 15, damage: 0, damageType: "utility", description: "Cria cortina de fumaça densa: reduz acerto do inimigo em 50% por 2 rodadas. Diferente da bomba explosiva."},
 		{id: "ro_phantomstep", name: "Passo Fantasma", emoji: "👻", branch: "esquiva", tier: 3, mpCost: 22, damage: 0, damageType: "buff", description: "Se esquivar, contra-ataca automaticamente por 50% do ataque base."},
 		{id: "ro_untouchable", name: "Intocável", emoji: "🌫️", branch: "esquiva", tier: 4, mpCost: 40, damage: 0, damageType: "buff", description: "Por 3 rodadas, cada esquiva cura 15 HP e garante próximo ataque crítico."},
 		// Branch: Veneno
 		{id: "ro_poison_blade", name: "Lâmina Envenenada", emoji: "☠️", branch: "veneno", tier: 1, mpCost: 6, damage: 10, damageType: "physical", description: "Aplica veneno: 8 dano por rodada por 3 turnos.", poisonDmg: 8, poisonTurns: 3},
-		{id: "ro_toxic_cloud", name: "Nuvem Tóxica", emoji: "🌫️", branch: "veneno", tier: 2, mpCost: 16, damage: 0, damageType: "utility", description: "Área de veneno denso. Inimigo sofre 12 dano/rodada por 4 turnos.", poisonDmg: 12, poisonTurns: 4},
+		// ro_toxic_cloud: renomeado de "Nuvem Tóxica" para "Névoa Venenosa" — r_toxic_cloud
+		// (legado envenenador T4) já usa esse nome.
+		{id: "ro_toxic_cloud", name: "Névoa Venenosa", emoji: "🌫️", branch: "veneno", tier: 2, mpCost: 16, damage: 0, damageType: "utility", description: "Névoa de toxina em área. Inimigo sofre 12 dano/rodada por 4 turnos. Diferente da nuvem concentrada.", poisonDmg: 12, poisonTurns: 4},
 		{id: "ro_master_toxin", name: "Toxina Mestre", emoji: "🧪", branch: "veneno", tier: 3, mpCost: 0, damage: 0, damageType: "passive", passive: true, description: "Passiva: todos os venenos duram 2 rodadas a mais."},
 		{id: "ro_deadly_venom", name: "Veneno Mortal", emoji: "💀", branch: "veneno", tier: 4, mpCost: 35, damage: 20, damageType: "physical", description: "Veneno imparável: 25 dano/rodada por 6 turnos. Não pode ser curado.", poisonDmg: 25, poisonTurns: 6},
 	}},
 
 	// ── Arcanista ──────────────────────────────────────────────────────────────
+	// NOTA: IDs usam prefixo "mgr_" para não colidir com game/skills/mage.go (prefixo "mg_").
+	// A branch "elementalista" é exclusiva deste sistema rpgdata (T1-T4 early game).
 	{classID: "mage", skills: []skillDef{
-		// Branch: Elementalista
-		{id: "mg_fireball", name: "Bola de Fogo", emoji: "🔥", branch: "elementalista", tier: 1, mpCost: 14, damage: 32, damageType: "magic", description: "Projétil de fogo explosivo. Dano de área ao impactar."},
-		{id: "mg_chain_lightning", name: "Relâmpago em Cadeia", emoji: "⚡", branch: "elementalista", tier: 2, mpCost: 25, damage: 50, damageType: "magic", description: "Relâmpago que salta entre alvos. Cada pulo perde 10% de dano."},
-		{id: "mg_blizzard", name: "Ventania", emoji: "❄️", branch: "elementalista", tier: 3, mpCost: 40, damage: 40, damageType: "magic", description: "Tempestade de gelo por 3 rodadas. Cada rodada causa dano e reduz velocidade."},
-		{id: "mg_meteor", name: "Meteoro", emoji: "☄️", branch: "elementalista", tier: 4, mpCost: 70, damage: 160, damageType: "magic", description: "Convoca um meteoro. Maior dano único do jogo. Atordoa por 1 turno."},
-		// Branch: Arcanista
+		// Branch: Elementalista (T1-T4, gerado pelo rpgdata)
+		// mgr_fireball: "Bola de Fogo" renomeado para "Projétil Ígnito" — m_fireball (piromante T1)
+		// já ocupa "Bola de Fogo". Esta é uma versão de magia pura elementalista, diferente.
+		{id: "mgr_fireball", name: "Projétil Ígnito", emoji: "🔥", branch: "elementalista", tier: 1, mpCost: 14, damage: 32, damageType: "magic", description: "Projétil de energia ígnea concentrada. Dano mágico puro sem área — penetra resistências físicas."},
+		{id: "mgr_chain_lightning", name: "Relâmpago em Cadeia", emoji: "⚡", branch: "elementalista", tier: 2, mpCost: 25, damage: 50, damageType: "magic", description: "Relâmpago que salta entre alvos. Cada pulo perde 10% de dano."},
+		// mgr_blizzard: ID "mg_blizzard" era usado por game/skills/mage.go ("Tempestade de Granizo").
+		// Renomeado para "mgr_blizzard" para evitar colisão silenciosa de IDs.
+		{id: "mgr_blizzard", name: "Ventania Gélida", emoji: "❄️", branch: "elementalista", tier: 3, mpCost: 40, damage: 40, damageType: "magic", description: "Ventania de gelo por 3 rodadas. Cada rodada causa dano e reduz velocidade do alvo."},
+		// mgr_meteor: ID "mg_meteor" era usado por game/skills/mage.go ("Chuva de Meteoros").
+		// Renomeado ID + nome para evitar colisão. "Meteoro" também duplicava m_meteor (legado).
+		{id: "mgr_meteor", name: "Impacto de Meteoro", emoji: "☄️", branch: "elementalista", tier: 4, mpCost: 70, damage: 160, damageType: "magic", description: "Direciona um único meteoro colossal: maior dano singular do jogo elementalista. Atordoa 1 turno."},
+		// Branch: Arcanista (complementa game/skills/mage.go que tem T3-T5 do mesmo ramo)
 		{id: "mg_arcane_bolt", name: "Projétil Arcano", emoji: "🔮", branch: "arcanista", tier: 1, mpCost: 10, damage: 24, damageType: "magic", description: "Projétil puro de energia arcana. Ignora resistência elemental."},
 		{id: "mg_arcane_surge", name: "Surto Arcano", emoji: "💫", branch: "arcanista", tier: 2, mpCost: 20, damage: 0, damageType: "buff", description: "+40% dano mágico por 3 rodadas. Consome MP extra a cada turno."},
 		{id: "mg_spell_mastery", name: "Maestria Mágica", emoji: "📚", branch: "arcanista", tier: 3, mpCost: 0, damage: 0, damageType: "passive", passive: true, description: "Passiva: -20% custo de MP em todas as magias."},
