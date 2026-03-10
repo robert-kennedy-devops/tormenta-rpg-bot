@@ -5,6 +5,8 @@ Bot MMORPG multiplayer para Telegram, inspirado no sistema Tormenta 20. Combate 
 Arquitetura modular escrita em Go, projetada para escalar de centenas a **1 milhão de jogadores**.
 
 > **Conteúdo gerado:** 150+ habilidades ativas no bot (48 legadas + 102 novas) · 210 na engine/rpg · 750+ itens · 59+ monstros · 8 classes · 7 raças — do nível 1 ao 100 · 20 combos · maestria em 6 níveis.
+>
+> **Segurança:** camada `internal/security/` com validação de input, rate limiting por ação, anti-exploit (dedup de callbacks e transações, cooldown, speed-hack), validação de economia, detecção de comportamento anômalo (bot-pattern, dungeon farm) e logger estruturado JSON.
 
 ---
 
@@ -18,11 +20,12 @@ Arquitetura modular escrita em Go, projetada para escalar de centenas a **1 milh
 6. [Gameplay](#gameplay)
 7. [Sistemas avançados](#sistemas-avançados)
 8. [Dados RPG gerados (rpgdata)](#dados-rpg-gerados-rpgdata)
-9. [Comandos de GM](#comandos-de-gm)
-10. [Pagamentos Pix](#pagamentos-pix-abacatepay)
-11. [Arquitetura técnica](#arquitetura-técnica)
-12. [Deploy com Docker](#deploy-com-docker)
-13. [Deploy manual](#deploy-manual)
+9. [Segurança](#segurança)
+10. [Comandos de GM](#comandos-de-gm)
+11. [Pagamentos Pix](#pagamentos-pix-abacatepay)
+12. [Arquitetura técnica](#arquitetura-técnica)
+13. [Deploy com Docker](#deploy-com-docker)
+14. [Deploy manual](#deploy-manual)
 
 ---
 
@@ -561,6 +564,72 @@ O pacote `internal/rpgdata` é uma biblioteca de dados pura (sem I/O, sem BD) qu
 | 3 | Mestre ⚙️ | lv 41–60 | ×5,0 |
 | 4 | Élite 💎 | lv 61–80 | ×9,0 |
 | 5 | Lendário 🌌 | lv 81–100 | ×14,0 |
+
+---
+
+## Segurança
+
+O pacote `internal/security/` implementa uma camada de proteção completa, sem dependências externas (stdlib Go puro), que opera como middleware antes de qualquer lógica de jogo.
+
+### Arquitetura de segurança
+
+```text
+Telegram callback / message
+         │
+         ▼
+   security.Gate.CheckCallback()
+         │
+   ┌─────┴──────────────────────────────────────┐
+   │ 1. Validator    — charset, tamanho, formato │
+   │ 2. ExploitDetector — dedup, speed-hack      │
+   │ 3. UserRateLimiter — token-bucket por ação  │
+   │ 4. BehaviorDetector — anomalia / bot-farm   │
+   │ 5. Flagged-user block                       │
+   └─────────────────────────────────────────────┘
+         │
+         ▼
+   Game logic (handlers/)
+```
+
+### Módulos
+
+| Arquivo | Responsabilidade |
+|---|---|
+| `validator.go` | Valida IDs, callbacks, comandos, slots de equipamento, valores numéricos — nunca retorna 0 silenciosamente em erro de parse |
+| `rate_limiter.go` | Token-bucket por (usuário, ação) — 11 `ActionKey`s com limites individuais (ex: `shop_buy` burst=5/s, `dungeon` burst=3/2s) |
+| `anti_exploit.go` | Deduplicação de callbacks (janela 1 s), deduplicação de TxID de pagamento (24 h), cooldown enforcement, speed-hack (< 80 ms), validação de transferência de ouro/item |
+| `economy_validator.go` | Valida carrinho de compra, venda, loot drop, mutações de ouro/diamantes e crédito de pagamento — retorna `EconomyViolation` tipado |
+| `behavior_detector.go` | Detecta spam farm (> 120 ações/min), dungeon farm (> 20 kills/min), gold/XP anomaly, callback spam e bot-pattern via coeficiente de variação de timing (CV < 5% → suspeito) |
+| `middleware.go` | `Gate` — ponto único de entrada; métodos `CheckCallback`, `CheckMessage`, `CheckGMCommand`, `CheckShopBuy`, `CheckShopSell`, `CheckDrop`, `CheckPaymentCredit` |
+| `logger.go` | Logger JSON estruturado com ring-buffer de 20.000 entradas; métodos de domínio (`Combat`, `Shop`, `Drop`, `Payment`, `GM`, `Exploit`, `Anomaly`) e feed channel para monitoramento em tempo real |
+
+### Integração em dois passos
+
+```go
+// 1. Instanciar o Gate uma vez (ex: em main.go)
+gate := security.NewGate(gmIDsMap)
+
+// 2. Adicionar no topo de cada handler de callback
+if err := gate.CheckCallback(cb); err != nil {
+    // request rejeitado — já logado internamente
+    return
+}
+```
+
+### Vulnerabilidades auditadas e cobertas
+
+| Severidade | Vulnerabilidade | Cobertura |
+|---|---|---|
+| 🔴 CRÍTICA | Race condition shop buy/sell (gold dup) | `EconomyValidator.ValidatePurchase` + player lock |
+| 🔴 CRÍTICA | Double-credit de pagamento | `ExploitDetector.TxAllowed` (dedup 24 h) |
+| 🔴 CRÍTICA | Webhook Pix sem autenticação obrigatória | `Gate.CheckPaymentCredit` + validação txID |
+| 🔴 CRÍTICA | `strconv.Atoi` erros ignorados em GM | `Validator.ParsePositiveInt` (nunca zero silencioso) |
+| 🟠 ALTA | Item ID não validado antes de lookup | `Validator.SafeID` + charset whitelist |
+| 🟠 ALTA | Equip slot injection via callback | `Validator.EquipSlot` whitelist |
+| 🟠 ALTA | Rate limiting apenas por contagem, sem custo | `UserRateLimiter` por `ActionKey` específico |
+| 🟡 MÉDIA | Callback spam / multi-click | `ExploitDetector.CallbackAllowed` (TTL 1 s) |
+| 🟡 MÉDIA | Overflow em total de carrinho | Overflow guards em `ValidatePurchase` |
+| 🟢 BAIXA | Memory leak em `CallbackGuard` | `ExploitDetector.maybeClean` automático (5 min) |
 
 ---
 
