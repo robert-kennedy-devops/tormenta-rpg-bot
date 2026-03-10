@@ -195,14 +195,18 @@ type Class struct {
 	Role         string
 }
 
+// Skill represents a learnable ability in the legacy game.Skills registry.
+// New fields (Role, AppliesStatus, RequiresStatus, SynergyMult, Scaling,
+// Cooldown, EnergyCost) are additive and safe to leave at zero/empty for
+// legacy skills — all handlers treat zero-value as "not applicable".
 type Skill struct {
 	ID               string
 	Name             string
 	Description      string
 	Class            string
 	Branch           string // ramo de build: "berserker","protector","champion", etc.
-	Tier             int    // 1-4
-	PointCost        int    // pontos para aprender: T1=1, T2=1, T3=2, T4=3
+	Tier             int    // 1-5 (T5 = ultimate, unlock lv 70-100)
+	PointCost        int    // pontos para aprender: T1=1, T2=1, T3=2, T4=3, T5=4
 	MPCost           int
 	Damage           int
 	DamageType       string
@@ -212,6 +216,28 @@ type Skill struct {
 	Emoji            string
 	PoisonDmgPerTurn int // dano de veneno por turno (DoT)
 	PoisonTurnsCount int // quantos turnos o veneno dura
+
+	// ── New fields (v2) ──────────────────────────────────────────────────────
+	// Role classifies the mechanical purpose of the skill (see SkillRole consts).
+	Role string
+	// Scaling is the fraction of the caster's primary stat added to Damage.
+	// Final skill damage = Damage + int(PrimaryStat * Scaling * logFactor).
+	Scaling float64
+	// Cooldown in combat turns (0 = no cooldown).
+	Cooldown int
+	// EnergyCost consumed when using the skill (in addition to MPCost).
+	EnergyCost int
+	// AppliesStatus is the status effect this skill inflicts on the target.
+	// Values: "poison","burn","freeze","stun","blind","bleed","curse","silence"
+	AppliesStatus string
+	// AppliesStatusTurns is how many turns the status lasts (default 2 if unset).
+	AppliesStatusTurns int
+	// RequiresStatus: if non-empty, skill deals SynergyMult bonus damage only
+	// when the target already has this status.  Implements skill synergies.
+	RequiresStatus string
+	// SynergyMult is the extra damage multiplier when RequiresStatus is active.
+	// E.g. 0.5 = +50% damage. 0 means no synergy bonus.
+	SynergyMult float64
 }
 
 type Monster struct {
