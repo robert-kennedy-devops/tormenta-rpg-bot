@@ -12,8 +12,30 @@ import (
 	"github.com/tormenta-bot/internal/models"
 )
 
-// pvpChallengeTarget stores the target charID selected via button (userID -> charID)
-var pvpChallengeTarget = map[int64]int{}
+// _pvpChallengeMap stores the target charID selected via button (userID -> charID).
+// Access only via pvpTargetGet/Set/Clear — protected by the package-level stateMu.
+var _pvpChallengeMap = map[int64]int{}
+
+// pvpTargetGet reads the pending challenge target for userID.
+func pvpTargetGet(userID int64) int {
+	stateMu.RLock()
+	defer stateMu.RUnlock()
+	return _pvpChallengeMap[userID]
+}
+
+// pvpTargetSet stores the pending challenge target for userID.
+func pvpTargetSet(userID int64, charID int) {
+	stateMu.Lock()
+	defer stateMu.Unlock()
+	_pvpChallengeMap[userID] = charID
+}
+
+// pvpTargetClear removes the pending challenge entry for userID.
+func pvpTargetClear(userID int64) {
+	stateMu.Lock()
+	defer stateMu.Unlock()
+	delete(_pvpChallengeMap, userID)
+}
 
 // =============================================
 // MENU PVP
@@ -156,7 +178,7 @@ func handlePVPSelectPlayer(chatID int64, msgID int, userID int64, targetCharID i
 		return
 	}
 
-	pvpChallengeTarget[userID] = target.ID
+	pvpTargetSet(userID, target.ID)
 	stakeOptions := game.PVPStakeOptions(char)
 	stats, _ := database.GetOrCreatePVPStats(target.ID)
 	defCA := game.CharacterCA(target.Class,
@@ -200,12 +222,12 @@ func handlePVPSendChallenge(chatID int64, msgID int, userID int64, stakeGold int
 	if char == nil {
 		return
 	}
-	targetID := pvpChallengeTarget[userID]
+	targetID := pvpTargetGet(userID)
 	if targetID == 0 {
 		showPVPMenu(chatID, msgID, userID)
 		return
 	}
-	delete(pvpChallengeTarget, userID)
+	pvpTargetClear(userID)
 
 	if stakeGold > 0 && char.Gold < stakeGold {
 		editPhoto(chatID, msgID, "combat",

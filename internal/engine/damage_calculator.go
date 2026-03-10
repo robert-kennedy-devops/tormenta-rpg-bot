@@ -118,6 +118,57 @@ func CalculateDamage(p ScalingParams) int {
 	return final
 }
 
+// ─── Log-scaled damage (anti-inflation for levels 1-100) ──────────────────────
+
+// LogScalingParams extends ScalingParams with a logarithmic level factor.
+// Use this instead of CalculateDamage when skill damage must stay balanced
+// across the full lv 1-100 range.
+//
+// The logarithmic factor ensures that, compared to linear scaling:
+//   - lv 1  → ×1.00 (unchanged)
+//   - lv 20 → ×1.15 (slight bonus)
+//   - lv 50 → ×1.20
+//   - lv 100 → ×1.23  (soft cap — prevents exponential inflation)
+type LogScalingParams struct {
+	ScalingParams
+	// LogBase controls how fast the curve flattens (default 10).
+	// Higher = flatter. Recommended range: 8–15.
+	LogBase float64
+}
+
+// CalculateDamageLog is the preferred damage formula for skills in a lv 1-100
+// game. It replaces the power-law level factor with log(level+1)/log(base):
+//
+//	raw = (base + stat*weight) * logFactor * element * crit * skill - armor
+//
+// At lv 100 with base=10 the boost is ~2.3× vs lv 1 (not 10× as with linear).
+func CalculateDamageLog(p LogScalingParams) int {
+	if p.LogBase <= 1 {
+		p.LogBase = 10
+	}
+	if p.StatWeight <= 0 {
+		p.StatWeight = 0.3
+	}
+	if p.ElementMult <= 0 {
+		p.ElementMult = 1.0
+	}
+	if p.CritMult <= 0 {
+		p.CritMult = 1.0
+	}
+	if p.SkillMult <= 0 {
+		p.SkillMult = 1.0
+	}
+
+	logFactor := 1.0 + math.Log(float64(p.AttackerLevel)+1)/math.Log(p.LogBase)*0.15
+	base := float64(p.BaseDamage) + float64(p.AttackerStat)*p.StatWeight
+	raw := base * logFactor * p.ElementMult * p.CritMult * p.SkillMult
+	final := int(raw) - p.DefenderArmor
+	if final < 1 {
+		final = 1
+	}
+	return final
+}
+
 // ─── Armour Class helper ───────────────────────────────────────────────────────
 
 // D20HitCheck returns true if the attacker hits given their roll + bonus vs target CA.

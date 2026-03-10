@@ -1,5 +1,25 @@
 package rpg
 
+// ─── Skill role ───────────────────────────────────────────────────────────────
+
+// SkillRole classifies the mechanical purpose of a skill.
+// Every skill must belong to exactly one role so the validator and UI can
+// detect mechanically-identical skills and categorise them for the player.
+type SkillRole string
+
+const (
+	RoleDirect  SkillRole = "DIRECT_DAMAGE" // single-target burst
+	RoleAoE     SkillRole = "AOE"           // area-of-effect damage
+	RoleDoT     SkillRole = "DOT"           // damage-over-time
+	RoleBuff    SkillRole = "BUFF"          // self or ally stat increase
+	RoleDebuff  SkillRole = "DEBUFF"        // enemy stat reduction
+	RoleControl SkillRole = "CONTROL"       // stun / freeze / silence
+	RoleHeal    SkillRole = "HEAL"          // restore HP / remove status
+	RoleUtility SkillRole = "UTILITY"       // mobility, escape, resource
+	RoleSummon  SkillRole = "SUMMON"        // spawn minions / totems
+	RolePassive SkillRole = "PASSIVE"       // permanent stat bonus
+)
+
 // ─── Skill tree node ──────────────────────────────────────────────────────────
 
 // SkillNode represents one ability in the class skill tree.
@@ -9,14 +29,15 @@ type SkillNode struct {
 	Emoji       string
 	Description string
 	Class       string
-	Branch      string // specialization branch within the class
-	Tier        int    // 1 = basic, 4 = ultimate
-	PointCost   int    // skill points required to unlock
+	Branch      string    // specialization branch within the class
+	Tier        int       // 1 = basic, 4 = ultimate
+	PointCost   int       // skill points required to unlock
+	Role        SkillRole // mechanical classification (required for validator)
 
 	// Combat properties.
-	MPCost      int
-	EnergyCost  int
-	Effects     []engine_Effect // resolved at engine layer
+	MPCost     int
+	EnergyCost int
+	Effects    []engine_Effect // resolved at engine layer
 
 	RequiredLevel int
 	Requires      []string // prerequisite skill IDs
