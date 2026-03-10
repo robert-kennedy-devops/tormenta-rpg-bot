@@ -218,9 +218,20 @@ tormenta-bot/
 │   │   ├── dungeon_logic.go       # Lógica de masmorras
 │   │   ├── energy.go              # Sistema de energia e regeneração
 │   │   ├── pvp_game.go            # Lógica de PvP
-│   │   └── extended_items.go      # Itens estendidos (materiais/crafting)
+│   │   ├── extended_items.go      # Itens estendidos (materiais/crafting)
+│   │   └── safe_lookup.go         # GetMonster/Race/Class/Skill/Item — nil-safe com erro
+│   │
+│   ├── game/skills/               # Auditoria e validação do sistema de habilidades
+│   │   └── validator.go           # ValidateSkillTrees(): IDs duplicados, mecânicas iguais,
+│   │                              #   requisitos órfãos, anomalias de balanceamento (mean+2σ)
+│   │
+│   ├── ui/                        # Motor de menus Telegram profissional
+│   │   └── menu_engine.go         # MenuState, Engine global, debounce 500ms, cache TTL 5s,
+│   │                              #   NavStack, PaginateItems[T], CompressCallback ≤64 bytes
+│   │
 │   ├── handlers/                  # Handlers Telegram
 │   │   ├── safe_state.go          # RWMutex + acessores para 6 mapas de sessão (thread-safe)
+│   │   └── pvp_handler.go         # pvpTargetGet/Set/Clear — race condition corrigida
 │   ├── menu/                      # Menus de teclado inline
 │   ├── router/                    # Roteador de mensagens/callbacks
 │   ├── services/                  # Serviços de negócio
@@ -587,9 +598,69 @@ Todas as ações são auditadas em `gm_action_logs`.
 - **Funções puras** no `engine/` e `rpg/` — sem acesso a BD, fáceis de testar
 - **Separação de domínio** — cada pacote tem responsabilidade única
 - **Extensível sem quebrar** — todos os novos módulos são aditivos (nenhum arquivo existente foi modificado na expansão MMORPG)
-- **Thread-safe** — mapas de sessão protegidos por `sync.RWMutex` em `handlers/safe_state.go`; singletons globais são seguros para uso concorrente
+- **Thread-safe** — mapas de sessão protegidos por `sync.RWMutex` em `handlers/safe_state.go`; `pvpChallengeTarget` migrado para accessors seguros; singletons globais são thread-safe
 - **Event-driven** — sistemas comunicam via `eventbus.Global` (pub/sub assíncrono)
 - **Constantes centralizadas** — `internal/config/game_config.go` elimina valores hardcoded espalhados pelo código
+- **Skill roles obrigatórios** — todo `SkillNode` declara um `SkillRole` (10 valores: `DIRECT_DAMAGE`, `AOE`, `DOT`, `BUFF`, `DEBUFF`, `CONTROL`, `HEAL`, `UTILITY`, `SUMMON`, `PASSIVE`)
+- **Fórmula anti-inflação** — `engine.CalculateDamageLog()` usa `log(lv+1)` limitando dano máx. a ×2.3 no lv 100 (vs ×10 linear)
+- **Validação de skills ao startup** — `game/skills.ValidateSkillTrees()` detecta IDs duplicados, mecânicas idênticas, requisitos órfãos e outliers de balanceamento
+- **Safe lookups** — `game.GetMonster/Race/Class/Skill/Item` retornam `(T, error)` eliminando nil-pointer panics em produção
+
+### Motor de menus (`internal/ui/`)
+
+O `MenuEngine` centraliza toda a navegação de teclados inline:
+
+```go
+// Registrar uma tela
+ui.Global.Register(&ui.MenuState{
+    ID: "inv_home",
+    Render: func(userID int64, args string) ui.Menu {
+        items := loadInventory(userID)
+        page, _ := strconv.Atoi(args)
+        window, totalPages, _ := ui.PaginateItems(items, page)
+        // ... build rows
+        return ui.Menu{Caption: caption, Rows: rows}
+    },
+    Handle: func(userID int64, callback string) { /* ... */ },
+})
+
+// Navegar com back stack
+ui.Global.NavigateTo(userID, "main_menu", "inv_home")
+prev := ui.Global.NavigateBack(userID) // retorna "main_menu"
+```
+
+| Recurso | Detalhe |
+|---|---|
+| Debounce | 500 ms por usuário — bloqueia double-tap |
+| Cache | TTL 5 s por (state+user+args) — evita DB em navegação rápida |
+| Callback limit | `CompressCallback` / `SafeCallback` — enforce ≤ 64 bytes (limite Telegram) |
+| Paginação | `PaginateItems[T]` genérico + `NavRow()` para ◀️/▶️ consistentes |
+| Back button | `BackButton(callback)` padronizado → "⬅️ Voltar" em toda tela |
+
+### Sistema de roles de habilidades
+
+Cada `SkillNode` agora declara um `SkillRole` obrigatório:
+
+| Role | Mecânica |
+|---|---|
+| `DIRECT_DAMAGE` | Dano único em alvo |
+| `AOE` | Dano em área |
+| `DOT` | Dano por turno (veneno, queimadura) |
+| `BUFF` | Aumenta stat de aliado/self |
+| `DEBUFF` | Reduz stat do inimigo |
+| `CONTROL` | Atordoa, congela, silencia |
+| `HEAL` | Restaura HP ou remove status |
+| `UTILITY` | Mobilidade, escape, gerenciamento de recurso |
+| `SUMMON` | Invoca minions ou totens |
+| `PASSIVE` | Bônus permanente de stat |
+
+O validador `game/skills.ValidateSkillTrees()` detecta automaticamente:
+- **[ERROR]** IDs duplicados entre classes
+- **[ERROR]** Pré-requisitos apontando para skills inexistentes
+- **[WARN]** Skills sem `Role` definido
+- **[WARN]** Mecânicas idênticas (mesmo fingerprint de effects + role)
+- **[WARN]** BasePower acima de mean + 2σ do mesmo tier (outlier de balanceamento)
+- **[WARN]** IsPassive / Role inconsistentes
 
 ### Barramento de eventos (`internal/eventbus/`)
 
