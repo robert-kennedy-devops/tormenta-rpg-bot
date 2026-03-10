@@ -29,6 +29,10 @@ type TempEffects struct {
 
 	SkipEnemyAttackTurns int
 	SkipOwnTurnTurns     int
+
+	// Named monster status for synergy checks (AppliesStatus / RequiresStatus)
+	MonsterStatus      string
+	MonsterStatusTurns int
 }
 
 func (e *TempEffects) EffectiveCABonus() int {
@@ -105,6 +109,7 @@ func (e *TempEffects) AdvanceTurn() {
 	dec(&e.EnemyDotTurns, func() { e.EnemyDotDmg = 0 })
 	dec(&e.SkipEnemyAttackTurns, func() {})
 	dec(&e.SkipOwnTurnTurns, func() {})
+	dec(&e.MonsterStatusTurns, func() { e.MonsterStatus = "" })
 	if e.CritMin > 0 {
 		// Crit range buffs valem 1 turno por padrão.
 		e.CritMin = 0
@@ -217,6 +222,20 @@ func (e *TempEffects) ConsumeSkipOwnTurn() bool {
 	}
 	e.SkipOwnTurnTurns--
 	return true
+}
+
+// SetMonsterStatus stores a named status on the monster (for synergy checks).
+// Only overwrites if the new duration is longer.
+func (e *TempEffects) SetMonsterStatus(status string, turns int) {
+	if turns > e.MonsterStatusTurns {
+		e.MonsterStatus = status
+		e.MonsterStatusTurns = turns
+	}
+}
+
+// HasMonsterStatus returns true if the monster currently has the given status.
+func (e *TempEffects) HasMonsterStatus(status string) bool {
+	return e.MonsterStatus == status && e.MonsterStatusTurns > 0
 }
 
 var (

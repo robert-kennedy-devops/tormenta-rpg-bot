@@ -2495,6 +2495,34 @@ func handleCombatSkill(chatID int64, msgID int, userID int64, skillID string) {
 			char.CombatMonsterPoisonDmg = result.PoisonDmg
 		}
 	}
+	// Aplica status do campo AppliesStatus (skills v2) e bônus de sinergia RequiresStatus
+	if !result.IsPlayerMiss && sk.AppliesStatus != "" {
+		turns := sk.AppliesStatusTurns
+		if turns <= 0 {
+			turns = 2
+		}
+		fx.SetMonsterStatus(sk.AppliesStatus, turns)
+		// Mapeia status para efeitos mecânicos existentes
+		switch sk.AppliesStatus {
+		case "burn":
+			fx.SetEnemyDot(sk.Damage/3+1, turns)
+		case "freeze", "stun", "silence":
+			fx.SetSkipEnemyAttack(turns)
+		case "blind":
+			fx.SetAtkPenalty(5, turns)
+		case "bleed":
+			fx.SetEnemyDot(sk.Damage/4+1, turns)
+		case "curse":
+			fx.SetCAPenalty(4, turns)
+		}
+		result.PlayerMessage += fmt.Sprintf("\n✨ *%s* aplicado por %d turno(s)!", sk.AppliesStatus, turns)
+	}
+	if !result.IsPlayerMiss && sk.RequiresStatus != "" && fx.HasMonsterStatus(sk.RequiresStatus) && sk.SynergyMult > 0 {
+		bonus := int(float64(result.PlayerDamage) * sk.SynergyMult)
+		result.PlayerDamage += bonus
+		char.CombatMonsterHP -= bonus
+		result.PlayerMessage += fmt.Sprintf("\n⚡ *Sinergia [%s]!* +%d dano bônus!", sk.RequiresStatus, bonus)
+	}
 	effectMsg := ""
 	if !result.IsPlayerMiss {
 		if sk.ID == "w_blood_rage" && char.HPMax > 0 && (char.HP*100/char.HPMax) >= 30 {
@@ -3792,6 +3820,34 @@ func branchEmoji(branch string) string {
 		return "🏹"
 	case "arcano":
 		return "✨"
+	// barbarian
+	case "frenesi":
+		return "💢"
+	case "resistencia":
+		return "🪨"
+	case "tribal":
+		return "🥁"
+	// paladin
+	case "sagrado":
+		return "✝️"
+	case "protecao":
+		return "🛡️"
+	case "julgamento":
+		return "⚖️"
+	// cleric
+	case "cura":
+		return "💚"
+	case "luz":
+		return "☀️"
+	case "protecao_divina":
+		return "🌟"
+	// bard
+	case "musica":
+		return "🎵"
+	case "conhecimento":
+		return "📚"
+	case "ilusao":
+		return "🎭"
 	}
 	return "🌿"
 }
@@ -3823,6 +3879,34 @@ func branchLabel(branch string) string {
 		return "Caçador"
 	case "arcano":
 		return "Arcano"
+	// barbarian
+	case "frenesi":
+		return "Frenesi"
+	case "resistencia":
+		return "Resistência"
+	case "tribal":
+		return "Tribal"
+	// paladin
+	case "sagrado":
+		return "Sagrado"
+	case "protecao":
+		return "Proteção"
+	case "julgamento":
+		return "Julgamento"
+	// cleric
+	case "cura":
+		return "Cura"
+	case "luz":
+		return "Luz"
+	case "protecao_divina":
+		return "Proteção Divina"
+	// bard
+	case "musica":
+		return "Música"
+	case "conhecimento":
+		return "Conhecimento"
+	case "ilusao":
+		return "Ilusão"
 	}
 	return branch
 }
@@ -3863,6 +3947,42 @@ func branchOrderIndex(class, branch string) int {
 		case "cacador":
 			return 1
 		case "arcano":
+			return 2
+		}
+	case "barbarian":
+		switch branch {
+		case "frenesi":
+			return 0
+		case "resistencia":
+			return 1
+		case "tribal":
+			return 2
+		}
+	case "paladin":
+		switch branch {
+		case "sagrado":
+			return 0
+		case "protecao":
+			return 1
+		case "julgamento":
+			return 2
+		}
+	case "cleric":
+		switch branch {
+		case "cura":
+			return 0
+		case "luz":
+			return 1
+		case "protecao_divina":
+			return 2
+		}
+	case "bard":
+		switch branch {
+		case "musica":
+			return 0
+		case "conhecimento":
+			return 1
+		case "ilusao":
 			return 2
 		}
 	}
