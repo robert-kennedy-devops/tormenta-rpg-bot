@@ -111,6 +111,14 @@ Com Docker, o PostgreSQL executa automaticamente todos os `.sql` de `./migration
 | `analytics_events` | Eventos opcionais de telemetria |
 | `gm_action_logs` | Auditoria de ações administrativas |
 | `player_items` | Instâncias de itens equipáveis (forja/progressão) |
+| `guilds` | Guildas (nome, tag, líder, nível, XP, banco, território) |
+| `guild_members` | Membros por guilda (rank, contribuição, última vez online) |
+| `market_listings` | Listagens ativas do mercado entre jogadores |
+| `market_auctions` | Leilões em andamento e histórico |
+| `pvp_ratings` | Rating Elo por jogador e temporada |
+| `world_boss_log` | Participação e dano por jogador em cada boss mundial |
+| `seasons` | Histórico de temporadas (data início/fim, tema) |
+| `season_rewards` | Recompensas concedidas ao encerrar temporada |
 
 ---
 
@@ -150,16 +158,24 @@ tormenta-bot/
 │   │   ├── economy_manager.go     # EconomyManager global, gold in circulation
 │   │   ├── inflation_controller.go# Multiplicadores dinâmicos de drop/custo
 │   │   └── tax_system.go          # Taxas de mercado/leilão/comércio direto
+│   ├── config/                    # Constantes de jogo centralizadas
+│   │   └── game_config.go         # EnergyMaxFree/VIP, taxas, intervalos, Elo K, etc.
+│   ├── state/                     # Gerenciador de sessão por usuário
+│   │   └── user_state.go          # Manager mutex-safe para estado efêmero de handlers
 │   ├── market/                    # Mercado entre jogadores
 │   │   ├── listing.go             # Listagens de itens, ListingStore
 │   │   ├── auction.go             # Leilão, lances, buy-it-now, liquidação
-│   │   └── market_service.go      # MarketService: post/buy/cancel/bid/settle
+│   │   ├── market_service.go      # MarketService: post/buy/cancel/bid/settle
+│   │   ├── db_store.go            # DBListingStore + DBAuctionStore (PostgreSQL)
+│   │   └── globals.go             # InitDB() substitui MemStore por DBStore na startup
 │   ├── guild/                     # Sistema completo de guildas
-│   │   ├── guild.go               # Guild model, Store, MemStore
+│   │   ├── guild.go               # Guild model, Store interface, MemStore
 │   │   ├── guild_members.go       # GuildService: criar/convidar/expulsar/promover
 │   │   ├── guild_bank.go          # Banco da guilda, depósito/saque, XP de guilda
 │   │   ├── guild_perks.go         # Perks por nível, buffs temporários de guilda
-│   │   └── guild_war.go           # Territórios, guerras agendadas, pontuação
+│   │   ├── guild_war.go           # Territórios, guerras agendadas, pontuação
+│   │   ├── db_store.go            # DBStore — implementação PostgreSQL do guild.Store
+│   │   └── globals.go             # InitDB() substitui MemStore por DBStore na startup
 │   ├── world/                     # Bosses mundiais e raids
 │   │   ├── world_boss.go          # BossManager global, spawn a cada 12h, ranking de dano
 │   │   └── raid_system.go         # RaidManager, sessões multi-fase, 5–20 jogadores
@@ -204,6 +220,7 @@ tormenta-bot/
 │   │   ├── pvp_game.go            # Lógica de PvP
 │   │   └── extended_items.go      # Itens estendidos (materiais/crafting)
 │   ├── handlers/                  # Handlers Telegram
+│   │   ├── safe_state.go          # RWMutex + acessores para 6 mapas de sessão (thread-safe)
 │   ├── menu/                      # Menus de teclado inline
 │   ├── router/                    # Roteador de mensagens/callbacks
 │   ├── services/                  # Serviços de negócio
@@ -570,7 +587,9 @@ Todas as ações são auditadas em `gm_action_logs`.
 - **Funções puras** no `engine/` e `rpg/` — sem acesso a BD, fáceis de testar
 - **Separação de domínio** — cada pacote tem responsabilidade única
 - **Extensível sem quebrar** — todos os novos módulos são aditivos (nenhum arquivo existente foi modificado na expansão MMORPG)
+- **Thread-safe** — mapas de sessão protegidos por `sync.RWMutex` em `handlers/safe_state.go`; singletons globais são seguros para uso concorrente
 - **Event-driven** — sistemas comunicam via `eventbus.Global` (pub/sub assíncrono)
+- **Constantes centralizadas** — `internal/config/game_config.go` elimina valores hardcoded espalhados pelo código
 
 ### Barramento de eventos (`internal/eventbus/`)
 
