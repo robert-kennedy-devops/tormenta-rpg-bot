@@ -7,7 +7,7 @@ import "github.com/tormenta-bot/internal/models"
 // IDs use "rg_" prefix.
 //
 // Branches: "assassino" (burst/stealth), "envenenador" (DoT/debuff), "sombra" (utility/evasion)
-// Synergy: Expose → bleed → Death Mark ×2
+// Synergy: Análise de Fraqueza → bleed → Marca da Morte ×2
 // Builds: Assassin (burst+execute), Poisoner (stacking DoT), Shadow (evasion+control), Hybrid
 func RogueSkills() []models.Skill {
 	return []models.Skill{
@@ -39,13 +39,15 @@ func RogueSkills() []models.Skill {
 
 		// ── ENVENENADOR (DoT + stacking debuffs) ──────────────────────────
 		{
+			// Substituído: "Nuvem Tóxica" era duplicata do legado r_toxic_cloud.
+			// Novo: Miasma Corrosivo — ácido que corrói armadura + veneno em área.
 			ID: "rg_toxic_cloud", Class: "rogue", Branch: "envenenador", Tier: 3,
-			Name: "Nuvem Tóxica", Emoji: "☁️", PointCost: 2, RequiredLevel: 30,
+			Name: "Miasma Corrosivo", Emoji: "🧪", PointCost: 2, RequiredLevel: 30,
 			Requires: "r_poison_blade", MPCost: 30, Damage: 15, DamageType: "poison",
 			Role: RoleAoE, Scaling: 0.4,
-			Description: "Espalha nuvem venenosa: 15 + 40% DEX. Aplica veneno de 3 turnos em TODOS os inimigos.",
+			Description: "Libera ácido corrosivo em área: 15 + 40% DEX imediato. Corrói armadura de todos os alvos (-25% DEF, 3 turnos) e aplica veneno de 3 turnos.",
 			PoisonDmgPerTurn: 20, PoisonTurnsCount: 3,
-			AppliesStatus: "poison", AppliesStatusTurns: 3,
+			AppliesStatus: "curse", AppliesStatusTurns: 3,
 		},
 		{
 			ID: "rg_virulent_poison", Class: "rogue", Branch: "envenenador", Tier: 4,
@@ -69,26 +71,33 @@ func RogueSkills() []models.Skill {
 
 		// ── SOMBRA (evasion + controle + utility) ─────────────────────────
 		{
+			// Substituído: "Passo das Sombras" era duplicata do legado r_shadow_step.
+			// Novo: Dissolução — merge nas sombras, reduz dano recebido + garante crítico.
 			ID: "rg_shadow_step", Class: "rogue", Branch: "sombra", Tier: 3,
-			Name: "Passo das Sombras", Emoji: "👻", PointCost: 2, RequiredLevel: 30,
+			Name: "Dissolução", Emoji: "👁️", PointCost: 2, RequiredLevel: 30,
 			Requires: "r_evasion", MPCost: 20,
 			Role: RoleUtility, Cooldown: 3,
-			Description: "Teleporta atrás do inimigo e entra em furtividade por 1 turno. Próximo ataque é garantidamente crítico.",
+			Description: "Dissolve-se nas sombras por 1 turno: reduz 50% do dano recebido, aumenta evasão em 40% e garante que o próximo ataque seja crítico.",
 		},
 		{
+			// Substituído: "Expor" era duplicata do legado r_expose (branch diferente).
+			// Novo: Análise de Fraqueza — golpe tático que expõe pontos vulneráveis.
 			ID: "rg_expose", Class: "rogue", Branch: "sombra", Tier: 3,
-			Name: "Expor", Emoji: "🩸", PointCost: 2, RequiredLevel: 35,
+			Name: "Análise de Fraqueza", Emoji: "🔍", PointCost: 2, RequiredLevel: 35,
 			Requires: "rg_shadow_step", MPCost: 25, Damage: 35, DamageType: "physical",
 			Role: RoleDebuff, Scaling: 0.5,
-			Description: "Ataque calculado: 35 + 50% DEX. Reduz 25% armadura do alvo e aplica sangramento 3 turnos.",
+			Description: "Ataque tático calculado: 35 + 50% DEX. Reduz 30% de armadura e resistência do alvo. Aplica sangramento 3 turnos — sinergiza com Marca da Morte.",
 			AppliesStatus: "bleed", AppliesStatusTurns: 3,
 		},
 		{
+			// Substituído: "Bomba de Fumaça" era duplicata do legado r_smoke_bomb.
+			// Novo: Névoa da Morte — fumaça tóxica que cega E envenena todos os inimigos.
 			ID: "rg_smoke_bomb", Class: "rogue", Branch: "sombra", Tier: 4,
-			Name: "Bomba de Fumaça", Emoji: "💨", PointCost: 3, RequiredLevel: 55,
-			Requires: "rg_expose", MPCost: 35,
-			Role: RoleControl, Cooldown: 4,
-			Description: "Lança bomba de fumaça: cega TODOS os inimigos por 2 turnos (-60% precisão) e você entra em furtividade completa.",
+			Name: "Névoa da Morte", Emoji: "💀", PointCost: 3, RequiredLevel: 55,
+			Requires: "rg_expose", MPCost: 35, Damage: 20, DamageType: "poison",
+			Role: RoleAoE, Scaling: 0.3, Cooldown: 4,
+			Description: "Lança névoa tóxica densa: 20 + 30% DEX imediato. Cega TODOS os inimigos por 2 turnos (-60% precisão) E aplica veneno (15 dano/turno por 3 turnos) em todos.",
+			PoisonDmgPerTurn: 15, PoisonTurnsCount: 3,
 			AppliesStatus: "blind", AppliesStatusTurns: 2,
 		},
 		{

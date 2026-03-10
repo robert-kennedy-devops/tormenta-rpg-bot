@@ -49,11 +49,13 @@ func WarriorSkills() []models.Skill {
 
 		// ── BERSERKER (T3-T5 expansion) ───────────────────────────────────
 		{
+			// Renomeado: "Sede de Sangue" conflitava com barb2_blood_thirst (barbarian).
+			// Warrior recebe versão mais técnica/marcial: "Golpe Voraz".
 			ID: "wa_bloodlust", Class: "warrior", Branch: "berserker", Tier: 3,
-			Name: "Sede de Sangue", Emoji: "🩸", PointCost: 2, RequiredLevel: 30,
+			Name: "Golpe Voraz", Emoji: "🩸", PointCost: 2, RequiredLevel: 30,
 			Requires: "w_warcry", MPCost: 20, Damage: 40, DamageType: "physical",
 			Role: RoleDirect, Scaling: 0.7,
-			Description: "Golpe feroz que cura 30% do dano causado. Cura dobrada se inimigo abaixo de 50% HP.",
+			Description: "Ataque marcial brutal que drena a vitalidade do inimigo: 40 + 70% ATK. Cura 30% do dano causado. Cura dobrada se inimigo abaixo de 50% HP.",
 			AppliesStatus: "bleed", AppliesStatusTurns: 3,
 		},
 		{

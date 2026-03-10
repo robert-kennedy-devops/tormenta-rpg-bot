@@ -7,7 +7,7 @@ import "github.com/tormenta-bot/internal/models"
 // IDs use "mg_" prefix.
 //
 // Branches: "piromante" (fire), "crionita" (ice), "arcanista" (arcane)
-// Synergy chain: Frost Nova → freeze → Ice Lance +50% dmg
+// Synergy chain: Lâmina de Gelo → freeze → Lança Potencializada +50% dmg
 // Builds: Pyromancer (DoT/burst), Cryomancer (control/execute), Arcane (scaling/mana)
 func MageSkills() []models.Skill {
 	return []models.Skill{
@@ -21,13 +21,15 @@ func MageSkills() []models.Skill {
 			AppliesStatus: "burn", AppliesStatusTurns: 4,
 		},
 		{
+			// Substituído: "Meteoro" era duplicata do legado m_meteor.
+			// Novo: Chuva de Meteoros — 4 impactos aleatórios em área (multi-hit AoE).
 			ID: "mg_meteor", Class: "mage", Branch: "piromante", Tier: 4,
-			Name: "Meteoro", Emoji: "☄️", PointCost: 3, RequiredLevel: 50,
-			Requires: "mg_combustion", MPCost: 50, Damage: 80, DamageType: "fire",
-			Role: RoleAoE, Scaling: 0.9, Cooldown: 3,
-			Description: "Invoca meteoro em área: 80 + 90% INT a todos inimigos. Garante queimadura 3 turnos. Bônus +50% em alvos em combustão.",
+			Name: "Chuva de Meteoros", Emoji: "☄️", PointCost: 3, RequiredLevel: 50,
+			Requires: "mg_combustion", MPCost: 50, Damage: 35, DamageType: "fire",
+			Role: RoleAoE, Scaling: 0.4, Cooldown: 3,
+			Description: "Invoca 4 meteoros em posições aleatórias: cada um causa 35 + 40% INT em área. Cada impacto aplica queimadura 2 turnos. Alvos já em combustão recebem +50% por impacto.",
 			RequiresStatus: "burn", SynergyMult: 0.5,
-			AppliesStatus: "burn", AppliesStatusTurns: 3,
+			AppliesStatus: "burn", AppliesStatusTurns: 2,
 		},
 		{
 			ID: "mg_phoenix_fire", Class: "mage", Branch: "piromante", Tier: 5,
@@ -40,12 +42,14 @@ func MageSkills() []models.Skill {
 
 		// ── CRIONITA (ice — controle + synergy) ───────────────────────────
 		{
+			// Substituído: "Nova de Gelo" era duplicata do legado m_frost_nova.
+			// Novo: Lâmina de Gelo — projétil de gelo concentrado de curto alcance.
 			ID: "mg_frost_nova", Class: "mage", Branch: "crionita", Tier: 3,
-			Name: "Nova de Gelo", Emoji: "❄️", PointCost: 2, RequiredLevel: 30,
-			Requires: "m_ice_lance", MPCost: 30, Damage: 25, DamageType: "ice",
-			Role: RoleControl, Scaling: 0.4, Cooldown: 2,
-			Description: "Explosão de gelo: 25 + 40% INT. Congela o alvo por 2 turnos (ataques físicos removem o congelamento).",
-			AppliesStatus: "freeze", AppliesStatusTurns: 2,
+			Name: "Lâmina de Gelo", Emoji: "🔪", PointCost: 2, RequiredLevel: 30,
+			Requires: "m_ice_lance", MPCost: 30, Damage: 45, DamageType: "ice",
+			Role: RoleDirect, Scaling: 0.6, Cooldown: 2,
+			Description: "Conjura lâmina de gelo cristalizado: 45 + 60% INT. 50% de chance de congelar por 1 turno. Alvo congelado recebe +40% de dano de gelo nesse turno.",
+			AppliesStatus: "freeze", AppliesStatusTurns: 1,
 		},
 		{
 			ID: "mg_ice_lance_ex", Class: "mage", Branch: "crionita", Tier: 3,
@@ -56,20 +60,24 @@ func MageSkills() []models.Skill {
 			RequiresStatus: "freeze", SynergyMult: 0.5,
 		},
 		{
+			// Substituído: "Nevasca" era duplicata do legado m_blizzard.
+			// Novo: Tempestade de Granizo — DoT em área com lentidão cumulativa.
 			ID: "mg_blizzard", Class: "mage", Branch: "crionita", Tier: 4,
-			Name: "Nevasca", Emoji: "🌨️", PointCost: 3, RequiredLevel: 55,
-			Requires: "mg_ice_lance_ex", MPCost: 60, Damage: 35, DamageType: "ice",
-			Role: RoleAoE, Scaling: 0.6, Cooldown: 3,
-			Description: "Nevasca em área por 2 turnos: 35 + 60% INT por turno. Aplica lentidão (-30% velocidade) em todos.",
+			Name: "Tempestade de Granizo", Emoji: "🌨️", PointCost: 3, RequiredLevel: 55,
+			Requires: "mg_ice_lance_ex", MPCost: 60, Damage: 25, DamageType: "ice",
+			Role: RoleAoE, Scaling: 0.5, Cooldown: 3,
+			Description: "Cobre a área com granizo por 2 turnos: 25 + 50% INT por turno em todos. Cada turno aplica lentidão cumulativa (-20% velocidade por turno). Garante congelamento no 2° turno.",
 			AppliesStatus: "freeze", AppliesStatusTurns: 2,
 		},
 		{
+			// Substituído: "Zero Absoluto" era duplicata do legado m_absolute_zero.
+			// Novo: Extinção Glacial — reduz temperatura ao zero absoluto em área.
 			ID: "mg_absolute_zero", Class: "mage", Branch: "crionita", Tier: 5,
-			Name: "Zero Absoluto", Emoji: "🌌", PointCost: 4, RequiredLevel: 78,
+			Name: "Extinção Glacial", Emoji: "🌌", PointCost: 4, RequiredLevel: 78,
 			Requires: "mg_blizzard", MPCost: 90, EnergyCost: 20,
 			Damage: 80, DamageType: "ice",
 			Role: RoleUlt, Scaling: 1.0, Cooldown: 8,
-			Description: "Ultimate: 80 + 100% INT. Congela garantido por 3 turnos. Alvos congelados recebem ×2.5 dano neste ataque.",
+			Description: "Ultimate: congela tudo ao redor — 80 + 100% INT em área. Alvos congelados recebem ×2.5 dano e ficam paralisados por 3 turnos. Pode congelar chefes que normalmente são imunes.",
 			RequiresStatus: "freeze", SynergyMult: 1.5,
 		},
 

@@ -21,11 +21,13 @@ func ArcherSkills() []models.Skill {
 			AppliesStatus: "bleed", AppliesStatusTurns: 2,
 		},
 		{
+			// Substituído: "Tiro na Cabeça" era duplicata do legado a_headshot.
+			// Novo: Execução Balística — tiro preciso no ponto vital com execute threshold.
 			ID: "ac_headshot", Class: "archer", Branch: "atirador", Tier: 4,
-			Name: "Tiro na Cabeça", Emoji: "💥", PointCost: 3, RequiredLevel: 50,
+			Name: "Execução Balística", Emoji: "💥", PointCost: 3, RequiredLevel: 50,
 			Requires: "ac_piercing_shot", MPCost: 40, Damage: 80, DamageType: "physical",
 			Role: RoleDirect, Scaling: 1.0, Cooldown: 2,
-			Description: "Mira na cabeça: 80 + 100% DEX. Sempre crítico se alvo em sangramento. +25% crit chance base.",
+			Description: "Mira calculada no ponto vital: 80 + 100% DEX. Alvo em sangramento: sempre crítico + dano +50%. +25% dano por turno de sangramento restante.",
 			RequiresStatus: "bleed", SynergyMult: 0.5,
 		},
 		{
@@ -73,12 +75,14 @@ func ArcherSkills() []models.Skill {
 
 		// ── ARCANO (flechas mágicas + debuffs) ────────────────────────────
 		{
+			// Substituído: "Flecha de Gelo" era duplicata do legado a_frost_arrow.
+			// Novo: Flecha do Vácuo — flecha dimensional que silencia e ignora barreiras.
 			ID: "ac_frost_arrow", Class: "archer", Branch: "arcano", Tier: 3,
-			Name: "Flecha de Gelo", Emoji: "❄️", PointCost: 2, RequiredLevel: 30,
-			Requires: "a_arcane_shot", MPCost: 30, Damage: 45, DamageType: "ice",
+			Name: "Flecha do Vácuo", Emoji: "🌌", PointCost: 2, RequiredLevel: 30,
+			Requires: "a_arcane_shot", MPCost: 30, Damage: 45, DamageType: "magic",
 			Role: RoleDirect, Scaling: 0.7,
-			Description: "Flecha encantada com gelo: 45 + 70% DEX. Lentidão 2 turnos e chance 30% de congelar por 1 turno.",
-			AppliesStatus: "freeze", AppliesStatusTurns: 1,
+			Description: "Flecha infundida com energia do vácuo dimensional: 45 + 70% DEX/INT. Atravessa barreiras mágicas e silencia o alvo por 1 turno (impede habilidades mágicas).",
+			AppliesStatus: "silence", AppliesStatusTurns: 1,
 		},
 		{
 			ID: "ac_arcane_volley", Class: "archer", Branch: "arcano", Tier: 4,
@@ -94,8 +98,8 @@ func ArcherSkills() []models.Skill {
 			Requires: "ac_arcane_volley", MPCost: 90, EnergyCost: 20,
 			Damage: 100, DamageType: "magic",
 			Role: RoleUlt, Scaling: 1.3, Cooldown: 9,
-			Description: "Ultimate: concentra toda energia arcana em uma única flecha — 100 + 130% DEX/INT (maior stat). Inimigos congelados recebem ×2.",
-			RequiresStatus: "freeze", SynergyMult: 1.0,
+			Description: "Ultimate: concentra toda energia arcana em uma única flecha — 100 + 130% DEX/INT (maior stat). Inimigos silenciados recebem ×2.",
+			RequiresStatus: "silence", SynergyMult: 1.0,
 		},
 	}
 }

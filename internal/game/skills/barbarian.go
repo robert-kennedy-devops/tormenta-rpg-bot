@@ -19,26 +19,33 @@ func BarbarianSkills() []models.Skill {
 			Description: "Entra em estado de frenesi: +60% ATK e -30% DEF por 3 turnos. Base de todo o ramo ofensivo.",
 		},
 		{
+			// Renomeado: "Sede de Sangue" conflitava com wa_bloodlust (warrior).
+			// Barbarian recebe versão primitiva/animal: "Voracidade Primitiva".
 			ID: "barb2_blood_thirst", Class: "barbarian", Branch: "frenesi", Tier: 2,
-			Name: "Sede de Sangue", Emoji: "🩸", PointCost: 1, RequiredLevel: 8,
+			Name: "Voracidade Primitiva", Emoji: "🩸", PointCost: 1, RequiredLevel: 8,
 			Requires: "barb2_rage", MPCost: 10, Damage: 30, DamageType: "physical",
 			Role: RoleDirect, Scaling: 0.6,
-			Description: "Ataque voraz: 30 + 60% STR. Cura 25% do dano causado. Em frenesi: cura duplicada.",
+			Description: "Ataque bestial movido por instinto primitivo: 30 + 60% STR. Cura 25% do dano causado. Em frenesi: cura duplicada e velocidade de ataque +30%.",
 		},
 		{
+			// Renomeado: "Grito de Guerra" conflitava com w_battle_cry (warrior legado).
+			// Barbarian recebe versão mais selvagem/tribal: "Berro Bárbaro".
 			ID: "barb2_war_cry", Class: "barbarian", Branch: "frenesi", Tier: 3,
-			Name: "Grito de Guerra", Emoji: "📢", PointCost: 2, RequiredLevel: 25,
+			Name: "Berro Bárbaro", Emoji: "📢", PointCost: 2, RequiredLevel: 25,
 			Requires: "barb2_blood_thirst", MPCost: 20,
 			Role: RoleAoE,
-			Description: "Grito que debilita todos os inimigos: -25% ATK e DEF por 3 turnos. Em frenesi: também aplica medo (stun 1 turno).",
+			Description: "Berro selvagem que abala o espírito dos inimigos: -25% ATK e DEF por 3 turnos. Em frenesi: o terror é tão intenso que stuna por 1 turno.",
 			AppliesStatus: "stun", AppliesStatusTurns: 1,
 		},
 		{
+			// Renomeado: "Devastação" conflitava com w_rampage (warrior legado).
+			// Barbarian recebe versão mais brutal/caótica: "Carnificina".
 			ID: "barb2_rampage", Class: "barbarian", Branch: "frenesi", Tier: 4,
-			Name: "Devastação", Emoji: "🌪️", PointCost: 3, RequiredLevel: 45,
+			Name: "Carnificina", Emoji: "🌪️", PointCost: 3, RequiredLevel: 45,
 			Requires: "barb2_war_cry", MPCost: 30, Damage: 50, DamageType: "physical",
 			Role: RoleAoE, Scaling: 0.7,
-			Description: "Ataca todos os inimigos 3 vezes (50 + 70% STR cada). Em frenesi: ignora 25% armadura.",
+			Description: "Frenesi de ataques caóticos em área: ataca todos os inimigos 3 vezes (50 + 70% STR cada). Em frenesi: ignora 25% armadura e causa sangramento em cada alvo.",
+			AppliesStatus: "bleed", AppliesStatusTurns: 2,
 		},
 		{
 			ID: "barb2_lord_of_war", Class: "barbarian", Branch: "frenesi", Tier: 5,
